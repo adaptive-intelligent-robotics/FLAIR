@@ -1,0 +1,5 @@
+[default]
+  url = "http://influxdb:8086"
+  token = "XXXXXX"
+  org = "FLAIR"
+  active = true

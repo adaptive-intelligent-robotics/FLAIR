@@ -1,0 +1,4 @@
+builtin_interfaces/Time stamp
+bool adaptation_on
+bool adaptation_reset
+float32 max_human_vx

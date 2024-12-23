@@ -1,0 +1,24 @@
+int32 point_id 0
+builtin_interfaces/Time gp_time_fc
+builtin_interfaces/Time gp_time_sensor
+int32 match_delay
+int32 num_accumulate
+int32 gp_addition
+builtin_interfaces/Time fc_time
+float32 human_command_x
+float32 human_command_y
+float32 fc_executed_x
+float32 fc_executed_y
+float32 fc_command_error_x
+float32 fc_command_error_y
+float32 fc_intent_error_x
+float32 fc_intent_error_y
+builtin_interfaces/Time sensor_time
+float32 sensor_x
+float32 sensor_y
+builtin_interfaces/Time slippage_time
+float32 slippage_right
+float32 slippage_left
+builtin_interfaces/Time vicon_time
+float32 vicon_x
+float32 vicon_y
