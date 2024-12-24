@@ -45,15 +45,15 @@ Run the command:
 ```
 ### Structure
 
-The main script implementing FLAIR is called [adaptation.py](fast_adaptation/src/flair/flair/adaptation.py). This script starts the multiple processes taking care of the data collection, processing and training. The code for each of these functionalities can be found in the [functionality_controller](fast_adaptation/src/flair/functionality_controller) folder which is imported into the `adaptation.py` script. The controller for the code can be found in the [functionality_controller.py](fast_adaptation/src/flair/functionality_controller/functionality_controller.py) file, which is the code directly producing the commands. 
+The main script implementing FLAIR is called [adaptation.py](fast_adaptation/src/flair/flair/adaptation.py). This script starts the multiple processes taking care of the data collection, processing and training. The code for each of these functionalities can be found in the [functionality_controller](fast_adaptation/src/flair/functionality_controller) folder which is imported into the `adaptation.py` script. The controller for the code can be found in the [functionality_controller.py](fast_adaptation/src/flair/functionality_controller/functionality_controller.py) file, which is the code directly producing the commands.
 
-#### Configurations
+## Configurations
 
 All the parameters that can be tweaked can be found in a configuration file called [adaptation_config.py](fast_adaptation/src/flair/flair/adaptation_config.py). All the parameters listed here have been used for the experimental runs reported in our paper.
 
 The script [vicon.py](fast_adaptation/src/flair/flair/vicon.py) contains the exact waypoints used for our experiments (which correspond to our lab settings), but they can easily be replaced by your path. At the beginning of the file, you can chose the perturbation you would like to apply to the robot. This file can be replaced by a manual controller for example if required.
- 
-#### Baselines
+
+### Baselines
 
 In addition to the code for FLAIR, we publish our baselines under the files [adaptation_rl.py](fast_adaptation/src/flair/flair/adaptation_rl.py) and [adaptation_lqr.py](fast_adaptation/src/flair/flair/adaptation_lqr.py). Similarly, the files producing the commands at each step are called [functionality_controller_rl.py](fast_adaptation/src/flair/functionality_controller/functionality_controller_rl.py) and [functionality_controller_lqr.py](fast_adaptation/src/flair/functionality_controller/functionality_controller_lqr.py).
 
