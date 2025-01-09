@@ -5,7 +5,7 @@ Our system is based on ROS2 and docker-compose.
 
 ## Building Docker Images
 
-Run the following commands inside the `docker` container:
+Run the following commands to build the `docker` container:
 
 ```
 docker build -t airl:flair -f airl/Dockerfile .
@@ -29,11 +29,7 @@ The script to start our docker pipeline can be run via the [start_flair.sh](fast
 We run the docker-compose pipeline on our NVIDIA Jetson Orin 32Gb that is directly connected to a VectorNav V100 IMU and a Zed2 Camera in addition to the GVRBot. The docker-compose file that is executed can be found [here](fast_adaptation/docker_compose_flair.yaml).
 
 
-**Note** Our setup requires the user to execute the following command to be executed to see the robot:
-```
-sudo route delete default
-```
-Once the command is executed, it is possible to ssh into the robot to start the rosbridge server (the GVRBot runs ROS whereas our codebase is written in ROS2).
+**Note** Our setup requires the user to first start the ROS server on the GVRBot before running our pipeline (we note that the GVRBot runs ROS whereas our codebase is written in ROS2, but we provide a rosbridge as part of our pipeline that handles all the communication).
 
 
 ### Virtual Driver
