@@ -1,0 +1,108 @@
+from typing import Any, List, Optional, Tuple
+
+import jax
+import jax.numpy as jnp
+from brax.envs.base import Env, State, Wrapper
+
+from qdax.environments.base_wrappers import QDEnv
+
+# name of the center of gravity
+COG_NAMES = {
+    "hexapod_angle_diff": "base_link",
+    "hexapod_no_reward": "base_link",
+    "hexapod_control": "base_link",
+}
+
+VELOCITY_BOUNDS = {
+    "hexapod_angle_diff": (jnp.array([-5.0, -5.0]), jnp.array([5.0, 5.0])),
+    "hexapod_no_reward": (jnp.array([-5.0, -5.0]), jnp.array([5.0, 5.0])),
+    "hexapod_control": (jnp.array([-5.0, -5.0]), jnp.array([5.0, 5.0])),
+}
+
+class XYVelocityWrapper(QDEnv):
+    def __init__(
+        self,
+        env: Env,
+        env_name: str,
+        minval: Optional[List[float]] = None,
+        maxval: Optional[List[float]] = None,
+    ):
+        if env_name not in COG_NAMES.keys():
+            raise NotImplementedError(f"This wrapper does not support {env_name} yet.")
+
+        super().__init__(config=None)
+
+        self.env = env
+        self._env_name = env_name
+        if hasattr(self.env, "sys"):
+            self._cog_idx = self.env.sys.body.index[COG_NAMES[env_name]]
+            self._bounds = VELOCITY_BOUNDS[env_name]
+            self._dim = self._bounds[0].size
+        else:
+            raise NotImplementedError(f"This wrapper does not support {env_name} yet.")
+
+        if minval is None:
+            minval = jnp.ones((2,)) * (-jnp.inf)
+
+        if maxval is None:
+            maxval = jnp.ones((2,)) * jnp.inf
+
+        if len(minval) == 2 and len(maxval) == 2:
+            self._minval = jnp.array(minval)
+            self._maxval = jnp.array(maxval)
+        else:
+            raise NotImplementedError(
+                "Please make sure to give two values for each limits."
+            )
+
+    @property
+    def state_descriptor_length(self) -> int:
+        return 2
+
+    @property
+    def state_descriptor_name(self) -> str:
+        return "xy_velocity"
+
+    @property
+    def state_descriptor_limits(self) -> Tuple[List[float], List[float]]:
+        return self._minval, self._maxval
+
+    @property
+    def behavior_descriptor_length(self) -> int:
+        return self.state_descriptor_length
+
+    @property
+    def behavior_descriptor_limits(self) -> Tuple[List[float], List[float]]:
+        return self.state_descriptor_limits
+
+    @property
+    def name(self) -> str:
+        return self._env_name
+
+    def reset(self, rng: jnp.ndarray) -> State:
+        state = self.env.reset(rng)
+        state.info["state_descriptor"] = jnp.clip(
+            state.qp.vel[self._cog_idx][:self._dim],
+            a_min=self._minval,
+            a_max=self._maxval,
+        )
+        return state
+
+    def step(self, state: State, action: jnp.ndarray) -> State:
+        state = self.env.step(state, action)
+        state.info["state_descriptor"] = jnp.clip(
+            state.qp.vel[self._cog_idx][:self._dim],
+            a_min=self._minval,
+            a_max=self._maxval,
+        )
+        return state
+
+    @property
+    def unwrapped(self) -> Env:
+        return self.env.unwrapped
+
+    def __getattr__(self, name: str) -> Any:
+        if name == "__setstate__":
+            raise AttributeError(name)
+        return getattr(self.env, name)
+

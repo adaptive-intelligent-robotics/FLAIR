@@ -1,0 +1,81 @@
+Bootstrap: docker
+From: nvidia/cuda:12.5.1-cudnn-runtime-ubuntu22.04
+
+%labels
+   Author manon.flageat18@imperial.ac.uk
+   Version v0.0.1
+
+%files
+   ../singularity/requirements.txt /requirements.txt
+
+%environment
+
+   # System
+   export TZ=Europe/London
+
+   # Mute the matplotlib warning
+   export MPLCONFIGDIR=/tmp/.matplotlib
+
+%post
+
+   export LD_LIBRARY_PATH="/workspace/lib:$LD_LIBRARY_PATH"
+   export MPLCONFIGDIR="/configs/"
+   export DEBIAN_FRONTEND=noninteractive
+   export TZ=Europe/London
+
+   # Update and install required libraries
+   apt-get update -y
+   apt install -y wget git software-properties-common ffmpeg
+
+   # Install correct version of cudnn
+   apt-get install libcudnn8=8.9.4.* libcudnn8-dev=8.9.4.*
+
+   # Install python
+   add-apt-repository ppa:deadsnakes/ppa
+   apt install -y python3.10 python3-pip
+
+   # Create a folder for matplotlib to mute the warning
+   mkdir -p /tmp/.matplotlib
+   chmod -R a+w /tmp/.matplotlib/
+
+   # Fix version of python3 to python3.10
+   update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
+
+   # Install pip
+   pip3 install --upgrade pip
+
+   # Avoid disutils conflict
+   pip install blinker --ignore-installed
+
+   # Install the Compatible CUPTI Version
+   pip install nvidia-cuda-cupti-cu12==12.5.82 nvidia-cuda-runtime-cu12==12.5.82 nvidia-cuda-nvcc-cu12==12.5.82 nvidia-cuda-cupti-cu12==12.5.82
+
+   # Install requirements
+   pip3 install -r requirements.txt
+
+   # Create working directory
+   mkdir -p /git/exp/flair
+
+   #==================================================================================
+   exit 0 #NOTFORFINAL - the lines below this "exit" will be executed only when building the final image
+   #==================================================================================
+
+   # Enter working directory
+   cd /git/exp/
+
+   if [ ! -z "${TOKEN}" ] # this enables the automated build in the CI environment
+     then
+       git clone https://${TOKEN}@github.com/adaptive-intelligent-robotics/FLAIR.git
+   else
+       git clone https://github.com/adaptive-intelligent-robotics/FLAIR.git ./FLAIR
+   fi
+
+%runscript
+
+    echo
+    echo "Listing libraries"
+    pip list
+
+
+%help
+    This is the development and running environment of FLAIR in Brax simulator
