@@ -49,9 +49,6 @@ NUMBER_LAPS_WIND = 4
 # Set number of point without damage in the wind
 WIND_DELAY = 0
 
-# Set to True if reseting for each dynamic target
-USE_RESET_DYNAMIC_SCALING = False
-
 # Big loop on the ramp
 BIG_LOOP_RAMP = [
     (-1703, 1700),
@@ -78,17 +75,10 @@ SMALL_LOOP_LAP = [
      (-1762, 331),
      (-1419, -8), 
      (-347, -234),
-     #(-468, -140),
-     #(-405, -288),
      (344, 203),
-     #(585, 115),
      (642, 1121),
-     #(858, 1068),
      (97, 2244),
-     #(416, 2167),
      (-821, 2566),
-     #(-591, 2465),
-     #(-594, 2752),
 ]
 if WIND_ONLY_MODE:
     SMALL_LOOP = NUMBER_LAPS_WIND * SMALL_LOOP_LAP
@@ -177,7 +167,9 @@ def writeEntry(
 # Main Vicon class #
 
 class Vicon(Node):
+
     def __init__(self, loglevel: str = "INFO") -> None:
+
         super().__init__("vicon")
 
         # Set up logging
@@ -259,7 +251,6 @@ class Vicon(Node):
         self.scaling_side = [DEFAULT_SCALING_SIDE for way_point in range (len(self.path))]
         self.scaling_amplitude = [DEFAULT_SCALING_AMPLITUDE for way_point in range (len(self.path))]
         self.wind = [False for way_point in range (len(self.path))]
-        self.robot_reset = [False] * (len(self.scaling_side))
 
         # For Chicane
         if CHICANE_MODE:
@@ -278,24 +269,12 @@ class Vicon(Node):
             elif USE_DYNAMIC_WAYPOINT_SCALING_CHICANE:
                 self._logger.warning("DRIVER: Applying dynamic scaling perturbation.")
                 self.scaling = [False] + [True for way_point in range (len(self.path) - 1)]
-                self.scaling_side = ["right"]*len([
-                    "right", "right", "right", "right", "right", 
-                    "left", "left", "left", "left", "left", "left", "left", "left", "left", "left", "left", "left",
-                ])
-
                 self.scaling_amplitude =[DEFAULT_SCALING_AMPLITUDE]*5 + [DEFAULT_SCALING_AMPLITUDE-0.3]*12
             
                 if NUMBER_LAPS_CHICANE > 1:
                     self.scaling_side = self.scaling_side + NUMBER_LAPS_CHICANE * self.scaling_side
                     self.scaling_amplitude = self.scaling_amplitude + NUMBER_LAPS_CHICANE*self.scaling_amplitude
 
-                if USE_RESET_DYNAMIC_SCALING:
-                    self.robot_reset = [
-                        False, False, False, False, False,
-                        True, False, False, False, False, False, False, False, False, False, False, False,
-                    ]
-                    if NUMBER_LAPS_CHICANE > 1:
-                        self.robot_reset = self.robot_reset * NUMBER_LAPS_CHICANE
             else:
                 self._logger.warning("DRIVER: Applying no perturbation.")
 
@@ -352,7 +331,9 @@ class Vicon(Node):
         self._logger.warning("")
         self._logger.info("Vicon: Done")
 
+
     def reset_and_start_rep(self):
+        """Reset the robot and start the next replication."""
 
         # Increment rep counter
         self.current_rep = self.current_rep + 1
@@ -411,7 +392,6 @@ class Vicon(Node):
                     ('adaptation_on', ADAPTATION_ON),
                     ('min_speed', MIN_DRIVER_SPEED),
                     ('max_speed', MAX_DRIVER_SPEED),
-                    ('reset_dynamic_scaling', USE_RESET_DYNAMIC_SCALING),
                 ],
             )
         except BaseException as e:
@@ -422,7 +402,8 @@ class Vicon(Node):
 
 
     def _vicon_callback(self, msg: Position) -> None:
-        """Process sensor data, when receiving them through adapted topic."""
+        """Process vicon data, when receiving them through corresponding topic."""
+
         if not self._sub_vicon_seen:
             self._logger.info("Present: Vicon Data")
             self._sub_vicon_seen = True
@@ -456,15 +437,14 @@ class Vicon(Node):
 
         # Send Path Tracking command
         current_way_point = self.target % len(self.path) # Works for random number of laps
-        # if current_way_point < len(self.big_loop_ramp) and current_way_point == len(self.path):
-        if current_way_point == len(self.path)-1:
+        if current_way_point == len(self.path) - 1:
             self.error_threshold = 0.2
         else:
             self.error_threshold = 0.1
         human_msg = self.follow_path(msg)
         
         # Send SystemControl
-        self._send_system_control(adaptation_reset=self.robot_reset[current_way_point])
+        self._send_system_control()
 
         # Send Perturbation
         self._send_perturbation(
@@ -479,15 +459,19 @@ class Vicon(Node):
             bernoulli=False,
         )
 
+        # Reset if done with this rep
         if not self.done:
             self._send_human(human_msg)
         else:
             self.reset_and_start_rep()
 
+        # Command is at 10Hz
         time.sleep(0.1)
+
 
     def _send_vicon(self, movement: Adapted):
         """Send Vicon reading."""
+
         if not self._pub_vel_sent:
             self._logger.info("Sent: Velocity")
             self._pub_vel_sent = True
@@ -521,6 +505,7 @@ class Vicon(Node):
 
     def _send_human(self, movement: HumanControl):
         """Send human command."""
+
         if not self._pub_human_sent:
             self._logger.info("Sent: HumanWaypoint")
             self._pub_human_sent = True
@@ -544,6 +529,7 @@ class Vicon(Node):
 
     def _send_system_control(self, adaptation_reset = False):
         """Create and send a system control message."""
+
         if not self._pub_system_control_sent:
             self._logger.info("Sent: SystemControl")
             self._pub_system_control_sent = True
@@ -551,6 +537,7 @@ class Vicon(Node):
         if adaptation_reset:
             self._logger.info("Sending RESET signal to adaptation.")
 
+        # Create message
         status_msg = SystemControl()
         status_msg.stamp = self.get_clock().now().to_msg()
         status_msg.adaptation_on = ADAPTATION_ON
@@ -587,6 +574,7 @@ class Vicon(Node):
             bernoulli: bool,
         ):
         """Create and send a perturbation message."""
+
         if not self._pub_perturbation_sent:
             self._logger.info("Sent: Perturbation")
             self._pub_perturbation_sent = True
@@ -609,7 +597,6 @@ class Vicon(Node):
                 perturbation_msg.right_scale = scaling_amplitude
             else:
                 self._logger.warning("WARNING: unknown perturbation side.")
-
         
         # Set dynamic scaling
         if dynamic_scaling:
@@ -618,8 +605,8 @@ class Vicon(Node):
                 
         # Set offset
         if offset:
-            perturbation_msg.left_offset = 0.0 #OFFSET_AMPLITUDE
-            perturbation_msg.right_offset = 0.0 #OFFSET_AMPLITUDE
+            perturbation_msg.left_offset = 0.0 
+            perturbation_msg.right_offset = 0.0 
 
         # Set wind and bernoulli
         perturbation_msg.wind = wind
@@ -648,117 +635,59 @@ class Vicon(Node):
             self._logger.warning("Warning: Influx sending failed.")
             self._logger.warning(e)
 
-    def quat_rotate_inverse(self, q, v):
-        shape = q.shape
-        q_w = q[:, -1]
-        q_vec = q[:, :3]
-        a = v * (2.0 * q_w**2 - 1.0).unsqueeze(-1)
-        b = np.cross(q_vec, v, dim=-1) * q_w.unsqueeze(-1) * 2.0
-        c = (
-            q_vec
-            * np.einsum(
-                "ij,jbc->ibc", q_vec.reshape(shape[0], 1, 3), v.reshape(shape[0], 3, 1)
-            ).squeeze(-1)
-            * 2.0
-        )
-        return a - b + c
-
-    def quaternion_to_euler_angle_vectorized(self, vector):
-        x, y, z, w = vector
-        ysqr = y * y
-
-        t0 = +2.0 * (w * x + y * z)
-        t1 = +1.0 - 2.0 * (x * x + ysqr)
-        X = np.degrees(np.arctan2(t0, t1))
-
-        t2 = +2.0 * (w * y - z * x)
-        t2 = np.where(t2 > +1.0, +1.0, t2)
-        # t2 = +1.0 if t2 > +1.0 else t2
-
-        t2 = np.where(t2 < -1.0, -1.0, t2)
-        # t2 = -1.0 if t2 < -1.0 else t2
-        Y = np.degrees(np.arcsin(t2))
-
-        t3 = +2.0 * (w * z + x * y)
-        t4 = +1.0 - 2.0 * (ysqr + z * z)
-        Z = np.degrees(np.arctan2(t3, t4))
-
-        euler_array = np.array([X, Y, Z])
-        # euler_array = np.deg2rad(euler_array)
-        # return X, Y, Z
-        return euler_array
-
-    def angular_velocities(self, q1, q2, dt):
-        return (2 / dt) * np.array(
-            [
-                q1[0] * q2[1] - q1[1] * q2[0] - q1[2] * q2[3] + q1[3] * q2[2],
-                q1[0] * q2[2] + q1[1] * q2[3] - q1[2] * q2[0] - q1[3] * q2[1],
-                q1[0] * q2[3] - q1[1] * q2[2] + q1[2] * q2[1] - q1[3] * q2[0],
-            ]
-        )
 
     def get_speed(self, movement: Position):
+        """Extract current linear and angular velocity estimates 
+        from vicon reading send through corresponding topics."""
+
+        # Get quaternions from current vicon reading
         quaternion = np.asarray(
             [movement.x_rot, movement.y_rot, movement.z_rot, movement.w]
         )
+
+        # Get position
         try:
             r = R.from_quat(quaternion)
         except Exception:
             return np.asarray([np.nan, np.nan, np.nan]), np.asarray(
                 [np.nan, np.nan, np.nan]
             )
+
         current_position = np.asarray(
             [movement.x_trans, movement.y_trans, movement.z_trans]
         )
-        # current_rot = self.quaternion_to_euler_angle_vectorized(quaternion)
         current_rot = r.as_euler("XYZ", degrees=True)  # extrinsic
 
-        # print("Angles, ",current_rot,np.rad2deg(r.as_euler('xyz'))) ## same thing
-        # current_rot = r.as_rotvec()
         frame_duration = 1 / 100
-
         current_frame = movement.frame_number
-
         if self.previous_position is None:
             self.previous_position = current_position
             self.previous_rot = current_rot
             self.previous_quat = quaternion
             self.previous_frame = current_frame
 
+        # Linear velocity
         linear_velocity = current_position - self.previous_position
         linear_velocity = r.apply(linear_velocity, inverse=True) / (
             (current_frame - self.previous_frame) * frame_duration * 1000
         )
 
-        # prev_r = R.from_quat(self.previous_quat).inv().as_quat()
-        # diff_r = R.from_quat(r.as_quat()*prev_r)
-
+        # Angular velocity
         angular_velocity = current_rot - self.previous_rot
-
-        # angular_velocity = np.where(angular_velocity > 180,angular_velocity-180,angular_velocity)
-        # angular_velocity = np.where(angular_velocity < -180,angular_velocity+180,angular_velocity)
-
         if angular_velocity[2] > 180:
             angular_velocity[2] -= 360
         elif angular_velocity[2] < -180:
             angular_velocity[2] += 360
-
-        # angular_velocity = (current_rot-self.previous_rot)
-        # angular_velocity = diff_r.as_rotvec(degrees=True)#as_euler('XYZ',degrees=True)
-        # print("Angular : ",angular_velocity)
-        # self.vx,self.vy,self.vz
-        # self.rotx,self.roty,self.rotz
-        # print("Angle Difference ",angular_velocity)
         angular_velocity = r.apply(angular_velocity, inverse=True) / (
             (current_frame - self.previous_frame) * frame_duration
         )
 
-        # print("Angular Test: ",angular_velocity)
         # Updating Position
         self.previous_position = current_position
         self.previous_rot = current_rot
         self.previous_frame = current_frame
 
+        # Moving average
         self.lin_vels.append(linear_velocity)
         self.ang_vels.append(angular_velocity)
         self.previous_quat = quaternion
@@ -768,11 +697,9 @@ class Vicon(Node):
         else:
             return np.average(self.lin_vels, axis=0), np.average(self.ang_vels, axis=0)
 
-        # return linear_velocity,angular_velocity
-        # self.quat_rotate_inverse(quaternion,trans_velocity)
-        # self.vx,self.vy,self.vz = self.quat_rotate_inverse(quaternion,trans_velocity)
 
     def follow_path(self, current_position: Position):
+        """Create the path tracking command."""
         
         if self.path is None:
             return HumanControl()
@@ -811,9 +738,6 @@ class Vicon(Node):
             # If done with the path, print it
             if self.target == (len(self.path)-1):
                 new_msg = HumanControl()
-                # new_msg.joystick.linear.x = 0.0
-                # new_msg.joystick.angular.z = 0.0
-                # new_msg.flipper.angular.x = 0.0
                 if not self.done:
                     self._send_system_control(adaptation_reset=True)
                     self.done = True
@@ -829,12 +753,7 @@ class Vicon(Node):
         # Compute the new vx command
         if -np.pi / 4 > angle_heading or angle_heading > np.pi / 4:
             # If need reorientation, no vx
-            #self._logger.info(f"Angle too big case {angle_heading} {np.pi / 4}.")
             v_lin = 0.0
-
-        # elif (-np.pi / 8 > angle_heading or angle_heading > np.pi / 8)  and distance > 0.2:
-        #     v_lin = np.clip(distance, -0.1, 0.1)
-
         else:
             # Else vx proportional to distance
             v_lin = np.clip(0.5 * distance, MIN_DRIVER_SPEED, MAX_DRIVER_SPEED)
