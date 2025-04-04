@@ -236,6 +236,12 @@ def set_up_hexapod(
 
     inference_fn = jax.jit(inference)
 
+    # Init policy structure
+    class PolicyStructure(jnp.ndarray):
+        @staticmethod
+        def apply(params: Genotype, state: EnvState, timestep: int) -> jnp.ndarray:
+            return inference_fn(params, state, timestep)
+
     # Init population of controllers
     def init_policies_fn(size: int, random_key: RNGKey) -> Tuple[jnp.ndarray, RNGKey]:
         random_key, subkey = jax.random.split(random_key)
@@ -305,6 +311,7 @@ def set_up_hexapod(
         env,
         scoring_fn,
         init_policies_fn,
+        PolicyStructure,
         min_bd,
         max_bd,
         qd_offset,

@@ -46,7 +46,7 @@ class Hexapod(env.Env):
 
         qp, info = self.sys.step(state.qp, action)
         obs = self._get_obs(qp, info)
-        state.info["bd"] = qp.pos[0, 0:2]
+        state.info["bd"] = qp.vel[0, 0:2]
 
         x_before = state.qp.pos[0, 0]
         x_after = qp.pos[0, 0]

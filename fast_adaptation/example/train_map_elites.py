@@ -110,6 +110,7 @@ random_key = jax.random.PRNGKey(args.seed)
     env,
     scoring_fn,
     init_policies_fn,
+    policy_structure,
     min_bd,
     max_bd,
     qd_offset,

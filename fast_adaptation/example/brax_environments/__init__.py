@@ -85,13 +85,13 @@ def create(
         if base_env_name == "ant":
             env = _envs[base_env_name](legacy_spring=False, use_contact_forces=False, **kwargs)
         elif base_env_name == "hexapod_no_reward":
-            print("Using local hexapod")
+            print("    Using local hexapod")
             env = Hexapod(**kwargs)
         elif base_env_name == "hexapod_angle_diff":
-            print("Using local hexapod")
+            print("    Using local hexapod")
             env = HexapodAngleDiff(**kwargs)
         elif base_env_name == "hexapod_control":
-            print("Using local hexapod")
+            print("    Using local hexapod")
             env = HexapodControl(**kwargs)
         elif base_env_name in _envs.keys():
             env = _envs[base_env_name](legacy_spring=False, **kwargs)
