@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 
 from qdax.core.neuroevolution.buffers.buffer import QDTransition
-from qdax.custom_types import Descriptor, Params
+from qdax.types import Descriptor, Params
 
 def get_velocity(data: QDTransition, mask: jnp.ndarray) -> Descriptor:
     """Compute velocity.

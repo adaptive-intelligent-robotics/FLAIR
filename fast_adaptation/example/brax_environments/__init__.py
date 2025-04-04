@@ -29,7 +29,7 @@ from brax_environments.bd_extractors import get_velocity
 
 # experimentally determinated offset
 qd_offset = {
-    "hexapod_velocity": 360,
+    "hexapod_velocity": 750,
     "hexapod_no_reward_velocity": 0.0,
     "hexapod_control_reward_velocity": 0.0,
 }
@@ -44,17 +44,17 @@ _qdax_custom_envs = {
     "hexapod_velocity": {
         "env": "hexapod_angle_diff",
         "wrappers": [XYVelocityWrapper],
-        "kwargs": [{"minval": [-2.0, -2.0], "maxval": [2.0, 2.0]}, {}],
+        "kwargs": [{"minval": [-0.25, -0.25], "maxval": [0.25, 0.25]}, {}],
     },
     "hexapod_no_reward_velocity": {
         "env": "hexapod_no_reward",
         "wrappers": [XYVelocityWrapper],
-        "kwargs": [{"minval": [-2.0, -2.0], "maxval": [2.0, 2.0]}, {}],
+        "kwargs": [{"minval": [-0.25, -0.25], "maxval": [0.25, 0.25]}, {}],
     },
     "hexapod_control_reward_velocity": {
         "env": "hexapod_control",
         "wrappers": [XYVelocityWrapper],
-        "kwargs": [{"minval": [-2.0, -2.0], "maxval": [2.0, 2.0]}, {}],
+        "kwargs": [{"minval": [-0.25, -0.25], "maxval": [0.25, 0.25]}, {}],
     },
 }
 

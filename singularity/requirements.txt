@@ -1,5 +1,9 @@
 --find-links https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-jax[cuda12_pip]
-qdax==0.4.0
+jax[cuda12_pip]==0.4.16
+qdax==0.3.0
 pandas==2.2.3
 seaborn==0.13.2
+gpjax==0.7.0
+triton==3.2.0
+optax==0.1.7
+scipy==1.12.0

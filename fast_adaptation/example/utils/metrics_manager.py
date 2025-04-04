@@ -7,7 +7,7 @@ from typing import Any, Callable, Tuple, Dict
 import jax
 import jax.numpy as jnp
 from qdax.core.containers.repertoire import Repertoire
-from qdax.custom_types import Metrics, RNGKey
+from qdax.types import Metrics, RNGKey
 
 def save_config(save_folder: str, name: str, args: Any):
     """Save the current config in the config.csv file."""

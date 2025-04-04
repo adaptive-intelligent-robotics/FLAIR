@@ -18,7 +18,7 @@ from qdax.core.emitters.emitter import EmitterState
 from qdax.core.emitters.mutation_operators import isoline_variation
 from qdax.core.map_elites import MAPElites
 from qdax.core.emitters.standard_emitters import MixingEmitter
-from qdax.custom_types import Metrics, RNGKey
+from qdax.types import Metrics, RNGKey
 
 from utils.metrics_manager import MetricsManager
 from utils.set_up_hexapod import set_up_hexapod
@@ -49,7 +49,7 @@ parser.add_argument("--seed", default=0, type=int, help="Sampled if 0.")
 parser.add_argument("--name", default="MAP-Elites", type=str)
 
 # Stopping criterion (required)
-parser.add_argument("--num-generations", default=5000, type=int)
+parser.add_argument("--num-generations", default=50000, type=int)
 
 # Compare size (required)
 parser.add_argument("--batch-size", default=2048, type=int)

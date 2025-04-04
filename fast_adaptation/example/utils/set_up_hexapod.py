@@ -8,7 +8,7 @@ from qdax.core.neuroevolution.buffers.buffer import (
     Transition,
 )
 from qdax.core.neuroevolution.networks.networks import MLP
-from qdax.custom_types import (
+from qdax.types import (
     Descriptor,
     EnvState,
     ExtraScores,
