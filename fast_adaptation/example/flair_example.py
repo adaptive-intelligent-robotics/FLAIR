@@ -45,20 +45,34 @@ from utils.set_up_hexapod import set_up_hexapod
 # Create a dummy Logger that just prints
 class PrintLogger:
 
-    def debug(msg):
-        print(f"DEBUG: {msg}")
+    def debug(msg: str) -> None:
+        print(f"    DEBUG: {msg}")
 
-    def info(msg):
-        print(f"INFO: {msg}")
+    def info(msg: str) -> None:
+        print(f"    INFO: {msg}")
 
-    def warning(msg):
+    def warning(msg: str) -> None:
         print(f"WARNING: {msg}")
 
-    def error(msg):
+    def error(msg: str) -> None:
         print(f"ERROR: {msg}")
 
-    def critical(msg):
+    def critical(msg: str) -> None:
         print(f"CRITICAL: {msg}")
+
+# Create fake ros timestamps
+class ROSTimestamp:
+    def __init__(self, time: int, rate_hz: float = 70.0):
+        total_nanoseconds = time * (1e9 / rate_hz)
+        self.sec = int(total_nanoseconds // 1e9)
+        self.nanosec = int(total_nanoseconds % 1e9)
+
+# Create fake UTC timestamps
+from datetime import datetime, timedelta, timezone
+def time_to_utc_timestamp(time: int, sim_start: datetime, rate_hz: float = 70.0):
+    elapsed = timedelta(seconds=time / rate_hz)
+    dt = sim_start + elapsed
+    return dt.isoformat(sep=' ', timespec='microseconds')
 
 ##########
 # Driver #
@@ -75,6 +89,8 @@ class Driver:
 
         self.path = path
         self.target = 0
+        self.target_tx, self.target_ty = self.path[self.target]
+        self.lap = 0
 
         # Parameters
         self.error_threshold = 0.1
@@ -97,6 +113,7 @@ class Driver:
         
         # Current target position
         x, y = self.path[self.target]
+        self.target_tx, self.target_ty = x, y
 
         # Transform quaternion
         r = R.from_quat(quaternion)
@@ -113,11 +130,13 @@ class Driver:
 
             # If done with the path, print it
             if self.target == (len(self.path)-1):
+                print(f"  Driver is done.")
                 return True, 0.0, 0.0
 
             # Else recursively call this function
             self.target += 1
-            print(f"Next target: {self.target}, at: {self.path[self.target]}")
+            self.lap = 1 # TODO
+            print(f"  Driver next target: {self.target}, at: {self.path[self.target]}.")
             return self.follow_path(
                 x_pos=x_pos,
                 y_pos=y_pos,
@@ -148,7 +167,14 @@ class FLAIR:
     src/flair/functionality_controller/, but in an asynchroneous version. 
     """
 
-    def __init__(self, map_elites_map: str, grid_resolution: np.ndarray, min_command: float, max_command: float):
+    def __init__(
+        self, adaptation_off: bool,map_elites_map: str, grid_resolution: int, min_command: float, max_command: float
+    ) -> None:
+
+        self.adaptation_off = bool(adaptation_off)
+        self.min_command = float(min_command)
+        self.max_command = float(max_command)
+        self.grid_resolution = int(grid_resolution)
 
         # Create empty DataPoints for addition
         self.datapoints = DataPoints.init(max_capacity=DATAPOINT_BATCH_SIZE, state_dims=8)
@@ -196,9 +222,9 @@ class FLAIR:
             self.adaptive_gp = AdaptiveGP(
                 logger=PrintLogger,
                 jiting_datapoints=jiting_datapoints,
-                grid_resolution=grid_resolution,
-                min_command=min_command,
-                max_command=max_command,
+                grid_resolution=self.grid_resolution,
+                min_command=self.min_command,
+                max_command=self.max_command,
                 robot_width=ROBOT_WIDTH,
                 default_obs_noise=DEFAULT_OBS_NOISE,
                 default_lengthscale=DEFAULT_LENGTHSCALE,
@@ -226,9 +252,9 @@ class FLAIR:
             self.adaptive_gp = AdaptiveGP(
                 logger=PrintLogger,
                 jiting_datapoints=jiting_datapoints,
-                grid_resolution=grid_resolution,
-                min_command=min_command,
-                max_command=max_command,
+                grid_resolution=self.grid_resolution,
+                min_command=self.min_command,
+                max_command=self.max_command,
                 robot_width=ROBOT_WIDTH,
                 default_obs_noise=DEFAULT_OBS_NOISE,
                 default_lengthscale=DEFAULT_LENGTHSCALE,
@@ -268,9 +294,9 @@ class FLAIR:
 
         # Init Adaptation
         self.adaptation = FunctionalityController(
-            grid_resolution=grid_resolution,
-            min_command=min_command,
-            max_command=max_command,
+            grid_resolution=self.grid_resolution,
+            min_command=self.min_command,
+            max_command=self.max_command,
             state_dim=STATE_DIM,
             state_min_opt_clip=STATE_MIN_OPT_CLIP,
             state_max_opt_clip=STATE_MAX_OPT_CLIP,
@@ -293,7 +319,7 @@ class FLAIR:
         # Generic reset
         self.reset()
 
-    def reset(self):
+    def reset(self) -> None:
 
         # Reset main objects
         self.data_collection.reset()
@@ -310,7 +336,9 @@ class FLAIR:
         self.offset = 0
 
     def add_datapoint(
+        self,
         state: np.ndarray,
+        sensor_time: int,
         sensor_tx: float,
         sensor_ty: float,
         sensor_tz: float,
@@ -331,28 +359,29 @@ class FLAIR:
         human_cmd_ang_z: float,
     ) -> None:
 
-            # Pass through the data collection
-            (
-                final_datapoint,
-                final_datapoints_msg,
-                metrics,
-                error_code,
-            ) = self.data_collection.data_collection(
-                state=state,
-                command_x=adaptation_cmd_lin_x,
-                command_y=adaptation_cmd_ang_z,
-                gp_prediction_x=gp_prediction_x,
-                gp_prediction_y=gp_prediction_y,
-                intent_x=human_cmd_lin_x,
-                intent_y=human_cmd_ang_z,
-                sensor_time=sensor_time,
-                sensor_x=sensor_vx,
-                sensor_y=sensor_wz,
-                sensor_wx=sensor_wx,
-                sensor_wy=sensor_wy,
-            )
+        # Pass through the data collection
+        (
+            final_datapoint,
+            final_datapoints_msg,
+            metrics,
+            error_code,
+        ) = self.data_collection.data_collection(
+            state=np.array([state]),
+            command_x=np.array([[adaptation_cmd_lin_x]]),
+            command_y=np.array([[adaptation_cmd_ang_z]]),
+            gp_prediction_x=np.array([[gp_prediction_x]]),
+            gp_prediction_y=np.array([[gp_prediction_y]]),
+            intent_x=np.array([[human_cmd_lin_x]]),
+            intent_y=np.array([[human_cmd_ang_z]]),
+            sensor_time=np.array([[sensor_time]]),
+            sensor_x=np.array([[sensor_vx]]),
+            sensor_y=np.array([[sensor_wz]]),
+            sensor_wx=np.array([[sensor_wx]]),
+            sensor_wy=np.array([[sensor_wy]]),
+        )
 
-            # Accumulate the datapoints to later update the model
+        # Accumulate the datapoints to later update the model
+        if final_datapoint is not None:
             self.datapoints = DataPoints.add(
                 datapoint=self.datapoints,
                 point_id=final_datapoint[0],
@@ -470,14 +499,14 @@ class EnvironmentManager:
     methods and attributes. 
     """
 
-    def __init__(self, map_elites_map: str):
+    def __init__(self, map_elites_map: str) -> None:
 
         # Create a random key
         random_seed = int(time.time() * 1e6) % (2**32)
         self.random_key = jax.random.PRNGKey(random_seed)
 
         # Load the config of the considered replication
-        with open(f"{args.map_elites_map}/config.csv", mode='r', newline='') as file:
+        with open(f"{map_elites_map}/config.csv", mode='r', newline='') as file:
             reader = csv.DictReader(file)
             self.env_config = [row for row in reader]
             if len(self.env_config) > 1:
@@ -546,15 +575,20 @@ class EnvironmentManager:
     def get_grid_details(self) -> Tuple[np.ndarray, float, float]:
         return self.grid_resolution, self.min_command, self.max_command
 
-    def reset(self):
+    def reset(self) -> Any:
         self.random_key, subkey = jax.random.split(self.random_key)
         self.env_state = self.env.reset(subkey)
+        return self.env_state
 
-    def step(self, cmd_lin_x: float, cmd_ang_z: float) -> None:
+    def step(self, cmd_lin_x: float, cmd_ang_z: float) -> Any:
 
         # Get the corresponding controller from the map
         if self.cmd_lin_x == None or self.cmd_ang_z == None or cmd_lin_x != self.cmd_lin_x or cmd_ang_z != self.cmd_ang_z:
-            index = get_cells_indices(jnp.asarray([cmd_lin_x, cmd_ang_z]), self.repertoire.centroids)
+            batch_of_descriptors = jnp.expand_dims(jnp.asarray([cmd_lin_x, cmd_ang_z]), axis=0)
+            indices = get_cells_indices(
+                batch_of_descriptors=batch_of_descriptors, 
+                centroids=self.repertoire.centroids,
+            )
             self.params = jax.tree_util.tree_map(
                 lambda x: x[indices].squeeze(), self.repertoire.genotypes
             )
@@ -563,11 +597,13 @@ class EnvironmentManager:
             self.timestep = 0
 
         # Get the action
-        action = self.inference_fn(self.params, self.env_state.obs, self.timestep)
+        action = self.inference_fn(self.params, self.env_state, self.timestep)
         self.timestep += 1
 
         # Apply it in the environment
         self.env_state = self.env.step(self.env_state, action)
+
+        return self.env_state
 
     def get_sensor(self) -> Tuple:
 
@@ -625,7 +661,7 @@ class PerturbationManager:
         wheel_base: float,
         wheel_radius: float,
         wheel_max_velocity: float,
-    ):
+    ) -> None:
 
         self.wheel_base = wheel_base
         self.wheel_radius = wheel_radius
@@ -757,139 +793,293 @@ class MetricManager:
     Influx in the real robotics pipeline. 
     """
 
-    def __init__(self, results: str, circuit: str, save_html: bool):
+    def __init__(
+        self, results: str, adaptation_off: bool, circuit: str, perturbation_off: bool, save_html: bool
+    ) -> None:
         self.folder = results
         if not os.path.exists(self.folder):
             os.mkdir(self.folder)
+        self.adaptation_off = adaptation_off
         self.circuit = circuit
+        self.perturbation_off = perturbation_off
         self.save_html = save_html
-        self.empty_metrics()
 
-    def empty_metrics(self):
+        # Naming based on configuration
+        self.common_file_name = "flair"
+        if self.adaptation_off:
+            self.common_file_name = "no_flair"
+        if self.perturbation_off:
+            self.common_file_name += "_no_perturb"
+        self.common_file_name + f"_{circuit}"
 
-        # Main comparison dataframe
-        self.main_metrics = {
-            "Timesteps": [],
-            "Reps": [],
-            "Sections_start_time": [],
-            "Sections_end_time": [],
-            "Sections": [],
-            "Sections_index": [],
-            "Laps": [],
-            "Laps_start_time": [],
-            "Laps_end_time": [],
-            "tx": [],
-            "ty": [],
-            "index": [],
-            "target_tx": [],
-            "target_ty": [],
-            "Time": [],
-            "Damage_Type": [],
-            "Scaling_Value": [],
-            "human_cmd_lin_x": [],
-            "human_cmd_ang_z": [],
-            "vx": [],
-            "wz": [],
+        # Create a csv to save common dataframe
+        main_metrics = self.main_metrics(0, 0, 0, "", 0, "", 0, 0, 0, 0, 0, 0, 0, 0, 0)
+        self.main_file_name = f"{self.folder}/main_{self.common_file_name}.csv"
+        self._create_metrics(
+            file_name=self.main_file_name,
+            metrics=main_metrics,
+            name="main",
+        )
+
+    def main_metrics(
+        self, 
+        time: int,
+        timestep: int,
+        rep: int,
+        damage_type: str,
+        scaling_value: float,
+        section: str,
+        #section_start_time: int,
+        #section_end_time: int,
+        lap: int,
+        #lap_start_time: int,
+        #lap_end_time: int,
+        target_tx: float,
+        target_ty: float,
+        tx: float,
+        ty: float,
+        human_cmd_lin_x: float,
+        human_cmd_ang_z: float,
+        vx: float,
+        wz: float,
+    ) -> Dict:
+
+        # Same content as the final dataframe used for analysis
+        main_metrics = {
+            "Time": [time],
+            "Timesteps": [timestep],
+            "Reps": [rep],
+            "Damage_Type": [damage_type],
+            "Scaling_Value": [scaling_value],
+            "Sections": [section],
+            #"Sections_start_time": [section_start_time],
+            #"Sections_end_time": [section_end_time],
+            "Laps": [lap],
+            #"Laps_start_time": [lap_start_time],
+            #"Laps_end_time": [lap_end_time],
+            "target_tx": [target_tx],
+            "target_ty": [target_ty],
+            "tx": [tx],
+            "ty": [ty],
+            "human_cmd_lin_x": [human_cmd_lin_x],
+            "human_cmd_ang_z": [human_cmd_ang_z],
+            "vx": [vx],
+            "wz": [wz],
         }
+        return main_metrics
+
+    def adaptation_metrics(
+        self, 
+        p1: float,
+        p2: float,
+        a: float,
+        b: float,
+        c: float,
+        d: float,
+        offset: float,
+        human_cmd_lin_x: float,
+        human_cmd_ang_z: float,
+        adaptation_cmd_lin_x: float,
+        adaptation_cmd_ang_z: float,
+        perturbation_cmd_lin_x: float,
+        perturbation_cmd_ang_z: float,
+    ) -> Tuple[Dict, Dict, Dict]:
 
         # Same content as /gp_damage_introspection in influx
-        self.gp_damage_introspection_metrics = {
-            "p1": [],
-            "p2": [],
+        gp_damage_introspection_metrics = {
+            "p1": [p1],
+            "p2": [p2],
         }
 
         # Same content as /learnt_state_functions in influx
-        self.learnt_state_functions_metrics = {
-            "a": [],
-            "b": [],
-            "c": [],
-            "d": [],
-            "offset": [],
+        learnt_state_functions_metrics = {
+            "a": [a],
+            "b": [b],
+            "c": [c],
+            "d": [d],
+            "offset": [offset],
         }
 
         # Same content as /adaptation in influx 
         # (missing some time-related field as this is asynchroneous)
-        self.adaptation_metrics = {
-            "human_cmd_lin_x": [],
-            "human_cmd_ang_z": [],
-            "adaptation_cmd_lin_x": [],
-            "adaptation_cmd_ang_z": [],
-            "adaptation_cmd_flipper": [],
-            "perturbation_cmd_lin_x": [],
-            "perturbation_cmd_ang_z": [],
-            "perturbation_cmd_flipper": [],
+        adaptation_metrics = {
+            "human_cmd_lin_x": [human_cmd_lin_x],
+            "human_cmd_ang_z": [human_cmd_ang_z],
+            "adaptation_cmd_lin_x": [adaptation_cmd_lin_x],
+            "adaptation_cmd_ang_z": [adaptation_cmd_ang_z],
+            "perturbation_cmd_lin_x": [perturbation_cmd_lin_x],
+            "perturbation_cmd_ang_z": [perturbation_cmd_ang_z],
         }
 
-    def _create_metrics(self, file_name: str, metrics: Dict, name: str) -> None:
-        with open(file_name, mode="w", newline="") as csv_file:
-            writer = csv.writer(csv_file)
-            writer.writerow(metrics.keys())
-        print(f"  Saving {name} metrics in {file_name}.")
+        return gp_damage_introspection_metrics, learnt_state_functions_metrics, adaptation_metrics
 
-    def create_metrics_rep(self, rep: int):
 
-        self.empty_metrics()
+    def create_metrics_rep(self, rep: int) -> None:
 
-        # Create a csv to save data for this rep
+        # Main metrics
+        main_metrics = self.main_metrics(0, 0, 0, "", 0, "", 0, 0, 0, 0, 0, 0, 0, 0, 0)
         self.rep_main_file_name = f"{self.folder}/{self.circuit}_replication_main_{rep}.csv"
         self._create_metrics(
             file_name=self.rep_main_file_name,
-            metrics=self.main_metrics,
+            metrics=main_metrics,
             name="main",
         )
 
-        self.rep_gp_damage_introspection_file_name = f"{self.folder}/{self.circuit}_replication_gp_damage_introspection_{rep}.csv"
+        # Adaptation metrics
+        gp_damage_introspection_metrics, learnt_state_functions_metrics, adaptation_metrics = self.adaptation_metrics(
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+        )
+
+        self.rep_gp_damage_introspection_file_name = (
+            f"{self.folder}/gp_damage_introspection_{rep}_{self.common_file_name}.csv"
+        )
         self._create_metrics(
             file_name=self.rep_gp_damage_introspection_file_name,
-            metrics=self.gp_damage_introspection_metrics,
+            metrics=gp_damage_introspection_metrics,
             name="gp_damage_introspection",
         )
 
-        self.rep_learnt_state_functions_file_name = f"{self.folder}/{self.circuit}_replication_learnt_state_functions_{rep}.csv"
+        self.rep_learnt_state_functions_file_name = (
+            f"{self.folder}/learnt_state_functions_{rep}_{self.common_file_name}.csv"
+        )
         self._create_metrics(
             file_name=self.rep_learnt_state_functions_file_name,
-            metrics=self.learnt_state_functions_metrics,
+            metrics=learnt_state_functions_metrics,
             name="learnt_state_functions",
         )
 
-        self.rep_adaptation_file_name = f"{self.folder}/{self.circuit}_replication_adaptation_{rep}.csv"
+        self.rep_adaptation_file_name = (
+            f"{self.folder}/adaptation_{rep}_{self.common_file_name}.csv"
+        )
         self._create_metrics(
             file_name=self.rep_adaptation_file_name,
-            metrics=self.adaptation_metrics,
+            metrics=adaptation_metrics,
             name="adaptation",
         )
 
         # If saving html, create a folder to save data
         if self.save_html:
-            self.rep_html_file_name = f"{self.folder}/{self.circuit}_replication_{rep}.html"
+            self.rep_html_file_name = f"{self.folder}/html_{rep}_{self.common_file_name}.html"
             self.rollout = []
             print(f"  Saving html in {self.rep_html_file_name}.")
     
-    def _save_metrics(self, file_name: str, metrics: Dict) -> None:
-        with open(file_name, mode="a", newline="") as csv_file:
-            writer = csv.writer(csv_file)
-            writer.writerow(metrics.values())
+    def save_main_metrics_rep(
+        self, 
+        env_state: Any, 
+        time: int,
+        timestep: int,
+        rep: int,
+        damage_type: str,
+        scaling_value: float,
+        section: str,
+        #section_start_time: int,
+        #section_end_time: int,
+        lap: int,
+        #lap_start_time: int,
+        #lap_end_time: int,
+        target_tx: float,
+        target_ty: float,
+        tx: float,
+        ty: float,
+        human_cmd_lin_x: float,
+        human_cmd_ang_z: float,
+        vx: float,
+        wz: float,
+    ) -> None:
 
-    def save_metrics_rep(self, env_state: Any, ):
+        # Create metrics
+        main_metrics = self.main_metrics(
+            time=time,
+            timestep=timestep,
+            rep=rep,
+            damage_type=damage_type,
+            scaling_value=scaling_value,
+            section=section,
+            #section_start_time=section_start_time,
+            #section_end_time=section_end_time,
+            lap=lap,
+            #lap_start_time=lap_start_time,
+            #lap_end_time=lap_end_time,
+            target_tx=target_tx,
+            target_ty=target_ty,
+            tx=tx,
+            ty=ty,
+            human_cmd_lin_x=human_cmd_lin_x,
+            human_cmd_ang_z=human_cmd_ang_z,
+            vx=vx,
+            wz=wz,
+        )
+        
+        # Save
+        self._save_metrics(
+            file_name=self.main_file_name,
+            metrics=main_metrics,
+        )
+        self._save_metrics(
+            file_name=self.rep_main_file_name,
+            metrics=main_metrics,
+        )
 
         # If saving html
         if self.save_html:
             self.rollout.append(env_state)
 
-    def save_html(self, env_sys: Any):
+    def save_adaptation_metrics_rep(
+        self, 
+        p1: float,
+        p2: float,
+        a: float,
+        b: float,
+        c: float,
+        d: float,
+        offset: float,
+        human_cmd_lin_x: float,
+        human_cmd_ang_z: float,
+        adaptation_cmd_lin_x: float,
+        adaptation_cmd_ang_z: float,
+        perturbation_cmd_lin_x: float,
+        perturbation_cmd_ang_z: float,
+    ) -> None:
+
+        # Create metrics
+        gp_damage_introspection_metrics, learnt_state_functions_metrics, adaptation_metrics = self.adaptation_metrics(
+            p1=p1,
+            p2=p2,
+            a=a,
+            b=b,
+            c=c,
+            d=d,
+            offset=offset,
+            human_cmd_lin_x=human_cmd_lin_x,
+            human_cmd_ang_z=human_cmd_ang_z,
+            adaptation_cmd_lin_x=adaptation_cmd_lin_x,
+            adaptation_cmd_ang_z=adaptation_cmd_ang_z,
+            perturbation_cmd_lin_x=perturbation_cmd_lin_x,
+            perturbation_cmd_ang_z=perturbation_cmd_ang_z,
+        )
+
+        # Save
+        self._save_metrics(
+            file_name=self.rep_gp_damage_introspection_file_name,
+            metrics=gp_damage_introspection_metrics,
+        )
+        self._save_metrics(
+            file_name=self.rep_learnt_state_functions_file_name,
+            metrics=learnt_state_functions_metrics,
+        )
+        self._save_metrics(
+            file_name=self.rep_adaptation_file_name,
+            metrics=adaptation_metrics,
+        )
+
+
+    def save_html_metrics(self, env_sys: Any) -> None:
         if self.save_html:
             html_file = html.render(env_sys, [s.pipeline_state for s in self.rollout])
             f = open(self.rep_html_file_name, "w")
             f.write(html_file)
             f.close()
 
-
-    def _save_configuration(self, file_name: str, config: Dict) -> None:
-        print(f"Saving configuration in {file_name}.")
-        with open(file_name, mode="w", newline="") as csv_file:
-            writer = csv.writer(csv_file)
-            writer.writerow(config.keys())
-            writer.writerow(config.values())
 
     def save_gp_collection_configuration(self) -> None:
         """Same content as /gp_collection_configuration in influx."""
@@ -964,7 +1154,6 @@ class MetricManager:
 
     def save_driver_configuration(
         self, 
-        adaptation_on: bool, 
         min_driver_speed: float, 
         max_driver_speed: float, 
         path: np.ndarray, 
@@ -987,7 +1176,7 @@ class MetricManager:
             "broken_leg": str(broken_leg),
             "broken_leg_index": str(broken_leg_index),
             "wind": str(wind),
-            "adaptation_on": adaptation_on,
+            "adaptation_on": not(self.adaptation_off),
             "min_speed": min_driver_speed,
             "max_speed": max_driver_speed,
         }
@@ -995,6 +1184,25 @@ class MetricManager:
             file_name=f"{self.folder}/vicon_configuration.csv",
             config=config,
         )
+
+    def _save_configuration(self, file_name: str, config: Dict) -> None:
+        print(f"  Saving configuration in {file_name}.")
+        with open(file_name, mode="w", newline="") as csv_file:
+            writer = csv.writer(csv_file)
+            writer.writerow(config.keys())
+            writer.writerow(config.values())
+
+    def _create_metrics(self, file_name: str, metrics: Dict, name: str) -> None:
+        print(f"  Saving {name} metrics in {file_name}.")
+        with open(file_name, mode="w", newline="") as csv_file:
+            writer = csv.writer(csv_file)
+            writer.writerow(metrics.keys())
+
+    def _save_metrics(self, file_name: str, metrics: Dict) -> None:
+        with open(file_name, mode="a", newline="") as csv_file:
+            writer = csv.writer(csv_file)
+            writer.writerow(metrics.values())
+
 
 ########
 # Main #
@@ -1022,6 +1230,7 @@ if __name__ == "__main__":
 
     # Circuit: chicane static, chicane dynamic or wind
     parser.add_argument("--circuit", default="chicane_static", type=str)
+    parser.add_argument("--perturbation-off", action="store_true")
 
     # Number of reps
     parser.add_argument("--num-reps", default=1, type=int)
@@ -1034,18 +1243,30 @@ if __name__ == "__main__":
     ##################
     # Initialisation #
 
+    print("\nInitialising the pipeline.")
+
     # Metric Manager initialisation
-    metric_manager = MetricManager(results=args.results, circuit=args.circuit, save_html=args.save_html)
+    metric_manager = MetricManager(
+        results=args.results, 
+        adaptation_off=args.adaptation_off,
+        circuit=args.circuit, 
+        perturbation_off=args.perturbation_off,
+        save_html=args.save_html,
+    )
 
     # Circuit initialisation 
     if args.circuit == "chicane_static":
         path = chicane_path
+        section = "Chicane"
     elif args.circuit == "chicane_dynamic":
         path = chicane_path
+        section = "Chicane"
     elif args.circuit == "chicane_broken_leg":
         path = chicane_path
+        section = "Chicane"
     elif args.circuit == "wind":
         path = wind_path
+        section = "Wind"
     else:
         assert 0, "!!!ERROR!!! Undefined circuit."
 
@@ -1056,25 +1277,37 @@ if __name__ == "__main__":
     broken_leg_index = [4 for way_point in range (len(path))]
     scaling_amplitude = [0.7 for way_point in range (len(path))]
     wind = [False for way_point in range (len(path))]
-    if args.circuit == "chicane_static":
-        scaling = [True for way_point in range (len(path))]
-    elif args.circuit == "chicane_dynamic":
-        scaling = [True for way_point in range (len(path))]
-        scaling_amplitude = [0.7] * 5 + [0.4] * 12
-    elif args.circuit == "chicane_broken_leg":
-        broken_leg = [True for way_point in range (len(path))]
-        broken_leg_index = [4 for way_point in range (len(path))]
-    elif args.circuit == "wind":
-        wind = [True for way_point in range (len(path))]
+    if not(args.perturbation_off):
+        if args.circuit == "chicane_static":
+            scaling = [True for way_point in range (len(path))]
+            damage_type = "static_scaling"
+            scaling_value = 0.7
+        elif args.circuit == "chicane_dynamic":
+            scaling = [True for way_point in range (len(path))]
+            scaling_amplitude = [0.7] * 5 + [0.4] * 12
+            damage_type = "dynamic_value_scaling"
+            scaling_value = 0.7
+        elif args.circuit == "chicane_broken_leg":
+            broken_leg = [True for way_point in range (len(path))]
+            broken_leg_index = [4 for way_point in range (len(path))]
+            damage_type = "broken_leg"
+            scaling_value = 4
+        elif args.circuit == "wind":
+            wind = [True for way_point in range (len(path))]
+            damage_type = "wind"
+            scaling_value = 1.0
+        else:
+            assert 0, "!!!ERROR!!! Undefined circuit."
     else:
-        assert 0, "!!!ERROR!!! Undefined circuit."
+        damage_type = "none"
+        scaling_value = 1.0
 
     # Environment initialisation 
     env_manager = EnvironmentManager(map_elites_map=args.map_elites_map)
     grid_resolution, min_command, max_command = env_manager.get_grid_details()
 
     # Perturbation initialisation
-    perturb_manager = PerturbationManager(
+    perturbation_manager = PerturbationManager(
         wheel_base=WHEEL_BASE,
         wheel_radius=WHEEL_RADIUS,
         wheel_max_velocity=WHEEL_MAX_VELOCITY,
@@ -1082,6 +1315,7 @@ if __name__ == "__main__":
 
     # FLAIR Initialisation 
     flair = FLAIR(
+        adaptation_off=args.adaptation_off,
         map_elites_map=args.map_elites_map,
         grid_resolution=grid_resolution,
         min_command=min_command,
@@ -1100,7 +1334,6 @@ if __name__ == "__main__":
         max_command=max_command,
     )
     metric_manager.save_driver_configuration(
-        adaptation_on=not(args.adaptation_off),
         min_driver_speed=min_driver_speed,
         max_driver_speed=max_driver_speed,
         path=path,
@@ -1112,52 +1345,79 @@ if __name__ == "__main__":
         broken_leg_index=broken_leg_index,
     )
 
+    print("Done initialising the pipeline.")
+
     #############
     # Main Loop #
 
     # For each replication
     for rep in range (args.num_reps):
-        print(f"Performing rep {rep} / {args.num_reps}.")
-
-        # Prepare the metrics for this rep
-        metric_manager.create_metrics_rep(rep=rep)
+        print(f"\nPerforming rep {rep} / {args.num_reps}.")
 
         # Reset the environment
-        env_manager.reset()
+        env_state = env_manager.reset()
 
         # Reset the driver
         driver.reset()
         driver_done = False
 
+        # Get the first sensor reading from the environment
+        (
+            state,
+            quaternion,
+            sensor_tx,
+            sensor_ty,
+            sensor_tz,
+            sensor_vx,
+            sensor_vy,
+            sensor_vz,
+            sensor_yaw,
+            sensor_roll,
+            sensor_pitch,
+            sensor_wx,
+            sensor_wy,
+            sensor_wz,
+        ) = env_manager.get_sensor()
+
+        # Prepare the metrics for this rep
+        metric_manager.create_metrics_rep(rep=rep)
+        sim_start = datetime.now(tz=timezone.utc)
+        timestep = 1
+        time = time_to_utc_timestamp(timestep, sim_start=sim_start)
+
+        # Save the first metrics for this rep
+        metric_manager.save_main_metrics_rep(
+            env_state=env_state,
+            time=time, 
+            timestep=timestep,
+            rep=rep,
+            damage_type=damage_type,
+            scaling_value=scaling_value,
+            section=section,
+            lap=driver.lap,
+            target_tx=driver.target_tx,
+            target_ty=driver.target_ty,
+            tx=sensor_tx,
+            ty=sensor_ty,
+            human_cmd_lin_x=0.0,
+            human_cmd_ang_z=0.0,
+            vx=sensor_vx,
+            wz=sensor_wz,
+        )
+
+        print(f"\n  Driver starting.")
+
         # While not done with the path
         while not driver_done:
 
-            # First, get the sensor reading from the environment
-            (
-                state,
-                quaternion,
-                sensor_tx,
-                sensor_ty,
-                sensor_tz,
-                sensor_vx,
-                sensor_vy,
-                sensor_vz,
-                sensor_yaw,
-                sensor_roll,
-                sensor_pitch,
-                sensor_wx,
-                sensor_wy,
-                sensor_wz,
-            ) = env_manager.get_sensor()
-
-            # Second, get the velocity command from the driver
+            # First, get the velocity command from the driver
             driver_done, human_cmd_lin_x, human_cmd_ang_z = driver.follow_path(
                 x_pos=sensor_tx,
                 y_pos=sensor_ty,
                 quaternion=quaternion,
             )
 
-            # Third, get the corresponding adaptation
+            # Second, get the corresponding adaptation
             (
                 adaptation_cmd_lin_x, 
                 adaptation_cmd_ang_z, 
@@ -1171,7 +1431,7 @@ if __name__ == "__main__":
                 state=state,
             )
 
-            # Fourth, apply the perturbation
+            # Third, apply the perturbation
             (
                 perturbation_cmd_lin_x, 
                 perturbation_cmd_ang_z, 
@@ -1181,11 +1441,31 @@ if __name__ == "__main__":
                 state,
             )
 
-            # Fifth, apply it for command_sensor_ratio timesteps
-            for timestep in range(args.command_sensor_ratio):
+            # Fourth, save the adaptation metrics
+            metric_manager.save_adaptation_metrics_rep(
+                p1=flair.p1,
+                p2=flair.p2,
+                a=flair.a,
+                b=flair.b,
+                c=flair.c,
+                d=flair.d,
+                offset=flair.offset,
+                human_cmd_lin_x=human_cmd_lin_x,
+                human_cmd_ang_z=human_cmd_ang_z,
+                adaptation_cmd_lin_x=adaptation_cmd_lin_x,
+                adaptation_cmd_ang_z=adaptation_cmd_ang_z,
+                perturbation_cmd_lin_x=perturbation_cmd_lin_x,
+                perturbation_cmd_ang_z=perturbation_cmd_ang_z,
+            )
+
+            # Fith, apply it for command_sensor_ratio timesteps
+            for sensor_timestep in range(args.command_sensor_ratio):
+
+                timestep += 1
+                time = time_to_utc_timestamp(timestep, sim_start=sim_start)
 
                 # Step the environment
-                env_manager.step(
+                env_state = env_manager.step(
                     cmd_lin_x=perturbation_cmd_lin_x,
                     cmd_ang_z=adaptation_cmd_ang_z,
                 )
@@ -1209,8 +1489,10 @@ if __name__ == "__main__":
                 ) = env_manager.get_sensor()
 
                 # Add to the adaptation dataset
+                sensor_time = ROSTimestamp(timestep)
                 flair.add_datapoint(
                     state=state,
+                    sensor_time=sensor_time,
                     sensor_tx=sensor_tx,
                     sensor_ty=sensor_ty,
                     sensor_tz=sensor_tz,
@@ -1232,8 +1514,26 @@ if __name__ == "__main__":
                 )
 
                 # Save the metrics
-                metric_manager.save_metrics_rep(self.env_state)
+                metric_manager.save_main_metrics_rep(
+                    env_state=env_state,
+                    time=time,
+                    timestep=timestep,
+                    rep=rep,
+                    damage_type=damage_type,
+                    scaling_value=scaling_value,
+                    section=section,
+                    lap=driver.lap,
+                    target_tx=driver.target_tx,
+                    target_ty=driver.target_ty,
+                    tx=sensor_tx,
+                    ty=sensor_ty,
+                    human_cmd_lin_x=human_cmd_lin_x,
+                    human_cmd_ang_z=human_cmd_ang_z,
+                    vx=sensor_vx,
+                    wz=sensor_wz,
+                )
 
         # Save the html
-        metric_manager.save_html(env_manager.env.sys)
+        metric_manager.save_html_metrics(env_manager.env.sys)
+    print(f"\nDone with all replications and runs.")
 
