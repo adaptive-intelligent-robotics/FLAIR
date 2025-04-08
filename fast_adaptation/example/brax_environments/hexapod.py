@@ -18,7 +18,6 @@ class Hexapod(env.Env):
     ) -> None:
         config = _SYSTEM_CONFIG_SPRING if legacy_spring else _SYSTEM_CONFIG
         super().__init__(config=config, **kwargs)
-        self.done = False
 
     def reset(self, rng: jp.ndarray) -> env.State:
         """Resets the environment to an initial state."""
@@ -29,16 +28,8 @@ class Hexapod(env.Env):
         info = self.sys.info(qp)
         obs = self._get_obs(qp, info)
         reward, done, zero = jp.zeros(3, float)
-        metrics = {
-            "reward_ctrl_cost": zero,
-            "reward_contact_cost": zero,
-            "reward_forward": zero,
-            "reward_survive": zero,
-        }
 
-        state = env.State(qp, obs, reward, done, metrics)
-        state.info["bd"] = jp.zeros((2))
-        self.done = False
+        state = env.State(qp, obs, reward, done, {})
         return state
 
     def step(self, state: env.State, action: jp.ndarray) -> env.State:
@@ -46,26 +37,12 @@ class Hexapod(env.Env):
 
         qp, info = self.sys.step(state.qp, action)
         obs = self._get_obs(qp, info)
-        state.info["bd"] = qp.vel[0, 0:2]
-
-        x_before = state.qp.pos[0, 0]
-        x_after = qp.pos[0, 0]
-        forward_reward = (x_after - x_before) / self.sys.config.dt
-        ctrl_cost = 0.5 * jp.sum(jp.square(action))
-        contact_cost = 0.5 * 1e-3 * jp.sum(jp.square(jp.clip(info.contact.vel, -1, 1)))
-        survive_reward = jp.float32(1)
 
         reward = self._get_reward(qp, info, action)
 
-        done = jp.where(qp.pos[0, 2] < 0.05, x=jp.float32(1), y=jp.float32(0))
-        done = jp.where(qp.pos[0, 2] > 0.19, x=jp.float32(1), y=done)
-
-        state.metrics.update(
-            reward_ctrl_cost=ctrl_cost,
-            reward_contact_cost=contact_cost,
-            reward_forward=forward_reward,
-            reward_survive=survive_reward,
-        )
+        #done = jp.where(qp.pos[0, 2] < 0.05, x=jp.float32(1), y=jp.float32(0))
+        #done = jp.where(qp.pos[0, 2] > 0.19, x=jp.float32(1), y=done)
+        done = jp.float32(0)
 
         return state.replace(qp=qp, obs=obs, reward=reward, done=done)
 
@@ -74,33 +51,37 @@ class Hexapod(env.Env):
 
     def _get_obs(self, qp: brax.QP, info: brax.Info) -> jp.ndarray:
         """Observe hexapod body position and velocities."""
-        # some pre-processing to pull joint angles and velocities
-        joint_angle, joint_vel = self.sys.joints[0].angle_vel(qp)
 
-        com_quat = qp.rot[0]
-        com_euler = quat_to_euler(com_quat)
+        # some pre-processing to pull joint angles and velocities
+        #joint_angle, joint_vel = self.sys.joints[0].angle_vel(qp)
+
+        #com_quat = qp.rot[0]
+        #com_euler = quat_to_euler(com_quat)
 
         # qpos:
         # X,Y,Z of the torso (3,)
         # orientation of the torso as quaternion (4,)
         # joint angles (18,)
-        qpos = [qp.pos[0, :], com_euler, joint_angle]
+        #qpos = [qp.pos[0, :], com_euler, joint_angle]
 
         # qvel:
         # velcotiy of the torso (3,)
         # angular velocity of the torso (3,)
         # joint angle velocities 18,)
-        qvel = [qp.vel[0], qp.ang[0], joint_vel]
+        #qvel = [qp.vel[0], qp.ang[0], joint_vel]
 
         # external contact forces:
         # delta velocity (3,), delta ang (3,) * 10 bodies in the system
         # Note that mujoco has 4 extra bodies tucked inside the Torso that Brax
         # ignores
-        cfrc = [jp.clip(info.contact.vel, -1, 1), jp.clip(info.contact.ang, -1, 1)]
+        #cfrc = [jp.clip(info.contact.vel, -1, 1), jp.clip(info.contact.ang, -1, 1)]
         # flatten bottom dimension
-        cfrc = [jp.reshape(x, x.shape[:-2] + (-1,)) for x in cfrc]
+        #cfrc = [jp.reshape(x, x.shape[:-2] + (-1,)) for x in cfrc]
 
-        return jp.concatenate(qpos + qvel)
+        #return jp.concatenate(qpos + qvel)
+
+        # No need for observation as no RL
+        return jp.zeros((1,), float)
 
 
 
@@ -1172,7 +1153,7 @@ collide_include {
   first: "leg_5_3"
   second: "floor"
 }
-dt: 0.03
+dt: 0.04
 substeps: 10
 dynamics_mode: "pbd"
 """
@@ -2249,7 +2230,7 @@ collide_include {
   first: "leg_5_3"
   second: "floor"
 }
-dt: 0.02
+dt: 0.04
 substeps: 5
 dynamics_mode: "legacy_spring"
 """
