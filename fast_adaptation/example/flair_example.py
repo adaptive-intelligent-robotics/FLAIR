@@ -10,6 +10,7 @@ from typing import Tuple, Dict, Any
 
 import jax
 import jax.numpy as jnp
+from brax.v1.io import html
 from brax.math import quat_to_euler
 from scipy.spatial.transform import Rotation as R
 
@@ -36,6 +37,10 @@ from path_config import chicane_path, chicane_number_laps, wind_path, wind_numbe
 # Import the environment
 from utils.set_up_hexapod import set_up_hexapod
 
+# Uncomment this to debug if time is spent rejiting functions.
+#import logging
+#logging.basicConfig(level=logging.DEBUG)
+
 # Define new version of robot-specific parameters
 # ROBOT_WIDTH = 
 # WHEEL_BASE = 
@@ -46,31 +51,31 @@ from utils.set_up_hexapod import set_up_hexapod
 class PrintLogger:
 
     def debug(msg: str) -> None:
-        print(f"    DEBUG: {msg}")
+        print(f"        DEBUG: {msg}")
 
     def info(msg: str) -> None:
-        print(f"    INFO: {msg}")
+        print(f"        INFO: {msg}")
 
     def warning(msg: str) -> None:
-        print(f"WARNING: {msg}")
+        print(f"    WARNING: {msg}")
 
     def error(msg: str) -> None:
-        print(f"ERROR: {msg}")
+        print(f"    ERROR: {msg}")
 
     def critical(msg: str) -> None:
-        print(f"CRITICAL: {msg}")
+        print(f"    CRITICAL: {msg}")
 
 # Create fake ros timestamps
 class ROSTimestamp:
-    def __init__(self, time: int, rate_hz: float = 70.0):
-        total_nanoseconds = time * (1e9 / rate_hz)
+    def __init__(self, timestep: int, rate_hz: float):
+        total_nanoseconds = timestep * (1e9 / rate_hz)
         self.sec = int(total_nanoseconds // 1e9)
         self.nanosec = int(total_nanoseconds % 1e9)
 
 # Create fake UTC timestamps
 from datetime import datetime, timedelta, timezone
-def time_to_utc_timestamp(time: int, sim_start: datetime, rate_hz: float = 70.0):
-    elapsed = timedelta(seconds=time / rate_hz)
+def timestep_to_utc_timestamp(timestep: int, sim_start: datetime, rate_hz: float):
+    elapsed = timedelta(seconds=timestep / rate_hz)
     dt = sim_start + elapsed
     return dt.isoformat(sep=' ', timespec='microseconds')
 
@@ -95,7 +100,7 @@ class Driver:
 
         # Parameters
         self.error_threshold = 0.1
-        self.min_driver_speed = 0.01
+        self.min_driver_speed = 0.02
         self.max_driver_speed = 0.1
         self.max_driver_rotation = 0.1
 
@@ -391,7 +396,7 @@ class FLAIR:
                 sensor_time_nanosec=final_datapoint[2],
                 command_time_sec=final_datapoint[3],
                 command_time_nanosec=final_datapoint[4],
-                state=final_datapoint[14:],
+                state=final_datapoint[14],
                 gp_prediction_x=final_datapoint[5],
                 gp_prediction_y=final_datapoint[6],
                 command_x=final_datapoint[7],
@@ -402,15 +407,7 @@ class FLAIR:
                 sensor_y=final_datapoint[12],
             )
 
-
-    def get_command(
-        self, 
-        human_cmd_lin_x: float, 
-        human_cmd_ang_z: float, 
-        state: np.ndarray,
-    ) -> Tuple[float, float, float, float, float, float]:
-
-        auto_reset = False
+    def train_model(self) -> None:
 
         # Add all datapoints to the dataset
         self.adaptive_gp.update(self.datapoints)
@@ -437,8 +434,8 @@ class FLAIR:
             )
 
             # Update the introspections
-            self.p1 = float(learned_params[0])
-            self.p2 = float(learned_params[1])
+            self.p1 = float(self.adaptive_gp.xy_learned_params['mean_function']['rotation'][0])
+            self.p2 = float(self.adaptive_gp.xy_learned_params['mean_function']['rotation'][1])
             self.a = self.adaptive_gp.xy_learned_params['mean_function']['rotation'][2]
             self.b = self.adaptive_gp.xy_learned_params['mean_function']['rotation'][3]
             self.c = self.adaptive_gp.xy_learned_params['mean_function']['rotation'][4]
@@ -459,6 +456,14 @@ class FLAIR:
 
             self.adaptation.dataset_state = send_dataset_state
             self.adaptation.kernel_x = self.adaptive_gp.kernel_x
+
+
+    def get_command(
+        self, 
+        human_cmd_lin_x: float, 
+        human_cmd_ang_z: float, 
+        state: np.ndarray,
+    ) -> Tuple[float, float, float, float, float, float]:
 
         # Get command from adaptation
         self.adaptation.state = jnp.array(state)
@@ -501,7 +506,7 @@ class EnvironmentManager:
     methods and attributes. 
     """
 
-    def __init__(self, map_elites_map: str) -> None:
+    def __init__(self, map_elites_map: str, sensor_freq: float) -> None:
 
         # Create a random key
         random_seed = int(time.time() * 1e6) % (2**32)
@@ -514,8 +519,8 @@ class EnvironmentManager:
             if len(self.env_config) > 1:
                 print(f"{len(self.env_config)} runs of MAP-Elites, keeping thr first one.")
             self.env_config = self.env_config[0]
-        self.env_name = self.env_config["env_name"]
-        print(f"Initialising the environment: {self.env_name}.")
+        self.env_name = "hexapod_no_reward_velocity" # Avoid the reward computation at each timestep
+        print(f"  Initialising the environment: {self.env_name}.")
 
         # Create the environment
         # Set episode_length None to not end the environment 
@@ -532,9 +537,16 @@ class EnvironmentManager:
         ) = set_up_hexapod(
             env_name=self.env_name,
             episode_length=None,
-            batch_size=1,
+            batch_size=None,
             random_key=subkey,
         )
+
+        # Infer number of repetitions
+        self.dt = self.env.sys.config.dt
+        #self.repetitions = max(round((1 / sensor_freq) / self.dt), 1)
+        #print(f"\n    Returning a sensor every {1 / sensor_freq} and using simulation dt of {self.dt}.")
+        self.repetitions = 5
+        print(f"    Repeating the environment {self.repetitions} times between sensor readings.")
 
         # Get the grid resolution
         grid_shape = [int(x) for x in self.env_config["euclidean_grid_shape"].split("_")]
@@ -547,7 +559,7 @@ class EnvironmentManager:
         assert max_bd[0] == max_bd[1], "!!!ERROR!!! grid should be squared."
         self.min_command = min_bd[0]
         self.max_command = max_bd[0]
-        print(f"    Using grid with resolution: {self.grid_resolution} and min/max: {self.min_command}, {self.max_command}.")
+        print(f"\n    Using grid with resolution: {self.grid_resolution} and min/max: {self.min_command}, {self.max_command}.")
 
         # Getting the path to the map from MAP-Elites
         results_repertoire = self.env_config["results_repertoire"]
@@ -586,6 +598,7 @@ class EnvironmentManager:
 
         # Get the corresponding controller from the map
         if self.cmd_lin_x == None or self.cmd_ang_z == None or cmd_lin_x != self.cmd_lin_x or cmd_ang_z != self.cmd_ang_z:
+            print("  New controller")
             batch_of_descriptors = jnp.expand_dims(jnp.asarray([cmd_lin_x, cmd_ang_z]), axis=0)
             indices = get_cells_indices(
                 batch_of_descriptors=batch_of_descriptors, 
@@ -598,12 +611,18 @@ class EnvironmentManager:
             self.cmd_ang_z = cmd_ang_z
             self.timestep = 0
 
-        # Get the action
-        action = self.inference_fn(self.params, self.env_state, self.timestep)
-        self.timestep += 1
+        for _ in range (self.repetitions):
 
-        # Apply it in the environment
-        self.env_state = self.env.step(self.env_state, action)
+            # Get the action
+            action = self.inference_fn(self.params, self.env_state, self.timestep)
+            self.timestep += 1
+
+            # Apply it in the environment
+            self.env_state = self.env.step(self.env_state, action)
+            if self.env_state.qp.pos[0][0] == 0:
+                print("x is 0")
+            if self.env_state.done:
+                print("Done")
 
         return self.env_state
 
@@ -832,7 +851,7 @@ class MetricManager:
 
     def create_main_metrics(
         self, 
-        time: int,
+        timing: int,
         timestep: int,
         rep: int,
         damage_type: str,
@@ -855,7 +874,7 @@ class MetricManager:
 
         # Same content as the final dataframe used for analysis
         main_metrics = {
-            "Time": [time],
+            "Time": [timing],
             "Timesteps": [timestep],
             "Reps": [rep],
             "Damage_Type": [damage_type],
@@ -880,7 +899,7 @@ class MetricManager:
     def add_main_metrics(
         self, 
         main_metrics,
-        time: int,
+        timing: int,
         timestep: int,
         rep: int,
         damage_type: str,
@@ -898,7 +917,7 @@ class MetricManager:
     ) -> Dict:
 
         new_main_metrics = self.create_main_metrics(
-            time=time,
+            timing=timing,
             timestep=timestep,
             rep=rep,
             damage_type=damage_type,
@@ -1089,7 +1108,7 @@ class MetricManager:
 
         # Save html
         if self.save_html:
-            html_file = html.render(env_sys, [s.pipeline_state for s in self.rollout])
+            html_file = html.render(env_sys, [s.qp for s in self.rollout])
             f = open(self.rep_html_file_name, "w")
             f.write(html_file)
             f.close()
@@ -1101,7 +1120,7 @@ class MetricManager:
     def add_main_metrics_rep(
         self, 
         env_state: Any, 
-        time: int,
+        timing: int,
         timestep: int,
         rep: int,
         damage_type: str,
@@ -1120,7 +1139,7 @@ class MetricManager:
 
         if self.main_metrics == {}:
             self.main_metrics = self.create_main_metrics(
-                time=time,
+                timing=timing,
                 timestep=timestep,
                 rep=rep,
                 damage_type=damage_type,
@@ -1139,7 +1158,7 @@ class MetricManager:
         else:
             self.main_metrics = self.add_main_metrics(
                 main_metrics=self.main_metrics,
-                time=time,
+                timing=timing,
                 timestep=timestep,
                 rep=rep,
                 damage_type=damage_type,
@@ -1340,8 +1359,10 @@ class MetricManager:
 
     def _save_metrics(self, file_name: str, metrics: Dict) -> None:
         with open(file_name, mode="a", newline="") as csv_file:
-            writer = csv.writer(csv_file)
-            writer.writerow(metrics.values())
+            writer = csv.DictWriter(csv_file, fieldnames=metrics.keys())
+            rows = zip(*metrics.values())
+            for row in rows:
+                writer.writerow(dict(zip(metrics.keys(), row)))
 
 
 ########
@@ -1365,8 +1386,12 @@ if __name__ == "__main__":
     # Adaptation On or Off
     parser.add_argument("--adaptation-off", action="store_true")
 
-    # Command / sensor ratio - set to the same value as real robot
-    parser.add_argument("--command-sensor-ratio", default=7, type=float)
+    # Frequency set to the same ratio as the real robot
+    parser.add_argument("--sensor-freq", default=70, type=float)
+    parser.add_argument("--command-freq", default=10, type=float)
+
+    # As not asynchroneous, set reasonable model training frequency
+    parser.add_argument("--model-training-freq", default=2, type=float)
 
     # Circuit: chicane static, chicane dynamic or wind
     parser.add_argument("--circuit", default="chicane_static", type=str)
@@ -1379,11 +1404,14 @@ if __name__ == "__main__":
     parser.add_argument("--save-html", action="store_true")
 
     args = parser.parse_args()
+    args.command_sensor_ratio = int(args.sensor_freq / args.command_freq)
+    args.model_command_ratio = int(args.command_freq / args.model_training_freq)
 
     ##################
     # Initialisation #
 
     print("\nInitialising the pipeline.")
+    start_t = time.time()
 
     # Metric Manager initialisation
     metric_manager = MetricManager(
@@ -1447,7 +1475,7 @@ if __name__ == "__main__":
         scaling_value = 1.0
 
     # Environment initialisation 
-    env_manager = EnvironmentManager(map_elites_map=args.map_elites_map)
+    env_manager = EnvironmentManager(map_elites_map=args.map_elites_map, sensor_freq=args.sensor_freq)
     grid_resolution, min_command, max_command = env_manager.get_grid_details()
 
     # Perturbation initialisation
@@ -1489,14 +1517,18 @@ if __name__ == "__main__":
         broken_leg_index=broken_leg_index,
     )
 
-    print("Done initialising the pipeline.")
+    print(f"Done initialising the pipeline, took: {time.time() - start_t}.")
+    start_t = time.time()
 
     #############
     # Main Loop #
 
     # For each replication
     for rep in range (args.num_reps):
-        print(f"\nPerforming rep {rep} / {args.num_reps}.")
+
+        print(f"\nPerforming rep {rep + 1} / {args.num_reps}.")
+        print(f"Initialising and reseting elements.")
+        start_rep_t = time.time()
 
         # Reset the environment
         env_state = env_manager.reset()
@@ -1531,12 +1563,12 @@ if __name__ == "__main__":
         metric_manager.create_metrics_rep(rep=rep)
         sim_start = datetime.now(tz=timezone.utc)
         timestep = 1
-        time = time_to_utc_timestamp(timestep, sim_start=sim_start)
+        timing = timestep_to_utc_timestamp(timestep, sim_start=sim_start, rate_hz=args.sensor_freq)
 
         # Save the first metrics for this rep
         metric_manager.add_main_metrics_rep(
             env_state=env_state,
-            time=time, 
+            timing=timing, 
             timestep=timestep,
             rep=rep,
             damage_type=damage_type,
@@ -1553,19 +1585,32 @@ if __name__ == "__main__":
             wz=sensor_wz,
         )
 
+        print(f"Done initialising and reseting, took: {time.time() - start_rep_t}.")
         print(f"\n  Driver starting.")
 
         # While not done with the path
+        call_since_last_training = 0
         while not driver_done:
 
-            # First, get the velocity command from the driver
+            debug_start_t = time.time()
+
+            # First, train the model if necessary
+            if call_since_last_training >= args.model_command_ratio and not args.adaptation_off:
+                print(f"    Debug - Training model.")
+                flair.train_model()
+                call_since_last_training = 0
+                print(f"    Debug - Done training model, took: {time.time() - debug_start_t}.")
+            else:
+                call_since_last_training += 1
+
+            # Second, get the velocity command from the driver
             driver_done, human_cmd_lin_x, human_cmd_ang_z = driver.follow_path(
                 x_pos=sensor_tx,
                 y_pos=sensor_ty,
                 quaternion=quaternion,
             )
 
-            # Second, get the corresponding adaptation
+            # Third, get the corresponding adaptation
             (
                 adaptation_cmd_lin_x, 
                 adaptation_cmd_ang_z, 
@@ -1579,7 +1624,7 @@ if __name__ == "__main__":
                 state=state,
             )
 
-            # Third, apply the perturbation
+            # Fourth, apply the perturbation
             (
                 perturbation_cmd_lin_x, 
                 perturbation_cmd_ang_z, 
@@ -1588,12 +1633,12 @@ if __name__ == "__main__":
                 adaptation_cmd_ang_z, 
                 state,
             )
-            print(f"Human: {human_cmd_lin_x}, {human_cmd_ang_z}.")
-            print(f"Adapt: {adaptation_cmd_lin_x}, {adaptation_cmd_ang_z}.")
-            print(f"Targets: {driver.target_tx}, {driver.target_ty}.")
-            print(f"Sensors: {sensor_tx}, {sensor_ty}.")
+            print(f"    Debug - Human: {human_cmd_lin_x}, {human_cmd_ang_z}.")
+            print(f"    Debug - Adapt: {adaptation_cmd_lin_x}, {adaptation_cmd_ang_z}.")
+            print(f"    Debug - Targets: {driver.target_tx}, {driver.target_ty}.")
+            print(f"    Debug - Sensors: {sensor_tx}, {sensor_ty}.")
 
-            # Fourth, save the adaptation metrics
+            # Fifth, save the adaptation metrics
             metric_manager.add_adaptation_metrics_rep(
                 p1=flair.p1,
                 p2=flair.p2,
@@ -1610,11 +1655,14 @@ if __name__ == "__main__":
                 perturbation_cmd_ang_z=perturbation_cmd_ang_z,
             )
 
+            print(f"    Debug - Pre-env time: {time.time() - debug_start_t}.")
+            debug_start_t = time.time()
+
             # Sixth, apply it for command_sensor_ratio timesteps
             for sensor_timestep in range(args.command_sensor_ratio):
 
                 timestep += 1
-                time = time_to_utc_timestamp(timestep, sim_start=sim_start)
+                timing = timestep_to_utc_timestamp(timestep, sim_start=sim_start, rate_hz=args.sensor_freq)
 
                 # Step the environment
                 env_state = env_manager.step(
@@ -1641,7 +1689,7 @@ if __name__ == "__main__":
                 ) = env_manager.get_sensor()
 
                 # Add to the buffers for FLAIR
-                sensor_time = ROSTimestamp(timestep)
+                sensor_time = ROSTimestamp(timestep, args.sensor_freq)
                 if not buffer_initialised:
                     buffer_state = np.array([state])
                     buffer_sensor_time = np.array([[sensor_time]])
@@ -1662,7 +1710,7 @@ if __name__ == "__main__":
                 # Save the metrics
                 metric_manager.add_main_metrics_rep(
                     env_state=env_state,
-                    time=time,
+                    timing=timing,
                     timestep=timestep,
                     rep=rep,
                     damage_type=damage_type,
@@ -1678,6 +1726,9 @@ if __name__ == "__main__":
                     vx=sensor_vx,
                     wz=sensor_wz,
                 )
+
+            print(f"    Debug - Env steps time: {time.time() - debug_start_t}.")
+            debug_start_t = time.time()
 
             # Add to the adaptation dataset
             flair.add_datapoint(
@@ -1696,7 +1747,11 @@ if __name__ == "__main__":
             )
             buffer_initialised = False
 
-        # Save the html
+            print(f"    Debug - Data Collection time: {time.time() - debug_start_t}.")
+
+        # Save the metrics
         metric_manager.save_metrics_rep(env_manager.env.sys)
-    print(f"\nDone with all replications and runs.")
+        print(f"Done with rep {rep + 1} / {args.num_reps}, took: {time.time() - start_rep_t}")
+
+    print(f"\nDone with all replications and runs, took {time.time() - start_t}")
 
