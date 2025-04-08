@@ -19,7 +19,7 @@ VELOCITY_BOUNDS = {
     "hexapod_control": (jnp.array([-5.0, -5.0]), jnp.array([5.0, 5.0])),
 }
 
-class XYVelocityWrapper(QDEnv):
+class XYawVelocityWrapper(QDEnv):
     def __init__(
         self,
         env: Env,
@@ -82,7 +82,7 @@ class XYVelocityWrapper(QDEnv):
     def reset(self, rng: jnp.ndarray) -> State:
         state = self.env.reset(rng)
         state.info["state_descriptor"] = jnp.clip(
-            state.qp.vel[self._cog_idx][:self._dim],
+            jnp.concatenate([state.qp.vel[self._cog_idx][0:1], state.qp.ang[self._cog_idx][2:3]], axis=0),
             a_min=self._minval,
             a_max=self._maxval,
         )
@@ -91,7 +91,7 @@ class XYVelocityWrapper(QDEnv):
     def step(self, state: State, action: jnp.ndarray) -> State:
         state = self.env.step(state, action)
         state.info["state_descriptor"] = jnp.clip(
-            state.qp.vel[self._cog_idx][:self._dim],
+            jnp.concatenate([state.qp.vel[self._cog_idx][0:1], state.qp.ang[self._cog_idx][2:3]], axis=0),
             a_min=self._minval,
             a_max=self._maxval,
         )

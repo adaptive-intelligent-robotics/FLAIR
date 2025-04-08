@@ -24,7 +24,7 @@ from qdax.environments.locomotion_wrappers import (
 from qdax.environments.pointmaze import PointMaze
 from qdax.environments.wrappers import CompletedEvalWrapper
 from brax_environments.hexapod import Hexapod, HexapodAngleDiff, HexapodControl
-from brax_environments.locomotion_wrappers import XYVelocityWrapper
+from brax_environments.locomotion_wrappers import XYawVelocityWrapper
 from brax_environments.bd_extractors import get_velocity
 
 # experimentally determinated offset
@@ -43,17 +43,17 @@ behavior_descriptor_extractor = {
 _qdax_custom_envs = {
     "hexapod_velocity": {
         "env": "hexapod_angle_diff",
-        "wrappers": [XYVelocityWrapper],
+        "wrappers": [XYawVelocityWrapper],
         "kwargs": [{"minval": [-0.17, -0.17], "maxval": [0.17, 0.17]}, {}],
     },
     "hexapod_no_reward_velocity": {
         "env": "hexapod_no_reward",
-        "wrappers": [XYVelocityWrapper],
+        "wrappers": [XYawVelocityWrapper],
         "kwargs": [{"minval": [-0.17, -0.17], "maxval": [0.17, 0.17]}, {}],
     },
     "hexapod_control_reward_velocity": {
         "env": "hexapod_control",
-        "wrappers": [XYVelocityWrapper],
+        "wrappers": [XYawVelocityWrapper],
         "kwargs": [{"minval": [-0.17, -0.17], "maxval": [0.17, 0.17]}, {}],
     },
 }

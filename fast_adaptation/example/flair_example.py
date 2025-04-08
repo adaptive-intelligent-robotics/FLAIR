@@ -31,7 +31,7 @@ from functionality_controller.data_collection import DataCollection
     
 
 # Import the path config
-from path_config import chicane_path, wind_path
+from path_config import chicane_path, chicane_number_laps, wind_path, wind_number_laps
 
 # Import the environment
 from utils.set_up_hexapod import set_up_hexapod
@@ -85,17 +85,19 @@ class Driver:
     components. 
     """
 
-    def __init__(self, path: np.array) -> None:
+    def __init__(self, path: np.array, number_laps: int) -> None:
 
         self.path = path
         self.target = 0
         self.target_tx, self.target_ty = self.path[self.target]
         self.lap = 0
+        self.number_laps = number_laps
 
         # Parameters
         self.error_threshold = 0.1
         self.min_driver_speed = 0.01
         self.max_driver_speed = 0.1
+        self.max_driver_rotation = 0.1
 
     def reset(self) -> None:
         self.target = 0
@@ -119,8 +121,8 @@ class Driver:
         r = R.from_quat(quaternion)
 
         # Compute the error
-        error_x = (x - x_pos) / 1000
-        error_y = (y - y_pos) / 1000
+        error_x = (x - x_pos) 
+        error_y = (y - y_pos) 
         error_robot_frame = r.apply(np.asarray([error_x, error_y, 0]), inverse=True)
         angle_heading = np.arctan2(error_robot_frame[1], error_robot_frame[0])
         distance = np.linalg.norm(error_robot_frame)
@@ -135,8 +137,8 @@ class Driver:
 
             # Else recursively call this function
             self.target += 1
-            self.lap = 1 # TODO
-            print(f"  Driver next target: {self.target}, at: {self.path[self.target]}.")
+            self.lap = self.target // (len(self.path) // self.number_laps)
+            print(f"  Driver next target: {self.target}, at: {self.path[self.target]}, lap: {self.lap}.")
             return self.follow_path(
                 x_pos=x_pos,
                 y_pos=y_pos,
@@ -152,7 +154,7 @@ class Driver:
             v_lin = np.clip(0.5 * distance, self.min_driver_speed, self.max_driver_speed)
 
         # Compute the new wz command
-        wz = np.clip(1.7 * angle_heading, -0.7, 0.7)
+        wz = np.clip(1.7 * angle_heading, -self.max_driver_rotation, self.max_driver_rotation)
 
         return False, v_lin, -wz
 
@@ -339,15 +341,15 @@ class FLAIR:
         self,
         state: np.ndarray,
         sensor_time: int,
-        sensor_tx: float,
-        sensor_ty: float,
-        sensor_tz: float,
+        #sensor_tx: float,
+        #sensor_ty: float,
+        #sensor_tz: float,
         sensor_vx: float,
-        sensor_vy: float,
-        sensor_vz: float,
-        sensor_yaw: float,
-        sensor_roll: float,
-        sensor_pitch: float,
+        #sensor_vy: float,
+        #sensor_vz: float,
+        #sensor_yaw: float,
+        #sensor_roll: float,
+        #sensor_pitch: float,
         sensor_wx: float,
         sensor_wy: float,
         sensor_wz: float,
@@ -366,18 +368,18 @@ class FLAIR:
             metrics,
             error_code,
         ) = self.data_collection.data_collection(
-            state=np.array([state]),
-            command_x=np.array([[adaptation_cmd_lin_x]]),
-            command_y=np.array([[adaptation_cmd_ang_z]]),
-            gp_prediction_x=np.array([[gp_prediction_x]]),
-            gp_prediction_y=np.array([[gp_prediction_y]]),
-            intent_x=np.array([[human_cmd_lin_x]]),
-            intent_y=np.array([[human_cmd_ang_z]]),
-            sensor_time=np.array([[sensor_time]]),
-            sensor_x=np.array([[sensor_vx]]),
-            sensor_y=np.array([[sensor_wz]]),
-            sensor_wx=np.array([[sensor_wx]]),
-            sensor_wy=np.array([[sensor_wy]]),
+            state=state,
+            command_x=adaptation_cmd_lin_x,
+            command_y=adaptation_cmd_ang_z,
+            gp_prediction_x=gp_prediction_x,
+            gp_prediction_y=gp_prediction_y,
+            intent_x=human_cmd_lin_x,
+            intent_y=human_cmd_ang_z,
+            sensor_time=sensor_time,
+            sensor_x=sensor_vx,
+            sensor_y=sensor_wz,
+            sensor_wx=sensor_wx,
+            sensor_wy=sensor_wy,
         )
 
         # Accumulate the datapoints to later update the model
@@ -813,7 +815,8 @@ class MetricManager:
         self.common_file_name + f"_{circuit}"
 
         # Create a csv to save common dataframe
-        main_metrics = self.main_metrics(0, 0, 0, "", 0, "", 0, 0, 0, 0, 0, 0, 0, 0, 0)
+        self.empty_metrics()
+        main_metrics = self.create_main_metrics(0, 0, 0, "", 0, "", 0, 0, 0, 0, 0, 0, 0, 0, 0)
         self.main_file_name = f"{self.folder}/main_{self.common_file_name}.csv"
         self._create_metrics(
             file_name=self.main_file_name,
@@ -821,7 +824,13 @@ class MetricManager:
             name="main",
         )
 
-    def main_metrics(
+    def empty_metrics(self) -> None:
+        self.main_metrics = {}
+        self.gp_damage_introspection_metrics = {}
+        self.learnt_state_functions_metrics = {}
+        self.adaptation_metrics = {}
+
+    def create_main_metrics(
         self, 
         time: int,
         timestep: int,
@@ -868,7 +877,48 @@ class MetricManager:
         }
         return main_metrics
 
-    def adaptation_metrics(
+    def add_main_metrics(
+        self, 
+        main_metrics,
+        time: int,
+        timestep: int,
+        rep: int,
+        damage_type: str,
+        scaling_value: float,
+        section: str,
+        lap: int,
+        target_tx: float,
+        target_ty: float,
+        tx: float,
+        ty: float,
+        human_cmd_lin_x: float,
+        human_cmd_ang_z: float,
+        vx: float,
+        wz: float,
+    ) -> Dict:
+
+        new_main_metrics = self.create_main_metrics(
+            time=time,
+            timestep=timestep,
+            rep=rep,
+            damage_type=damage_type,
+            scaling_value=scaling_value,
+            section=section,
+            lap=lap,
+            target_tx=target_tx,
+            target_ty=target_ty,
+            tx=tx,
+            ty=ty,
+            human_cmd_lin_x=human_cmd_lin_x,
+            human_cmd_ang_z=human_cmd_ang_z,
+            vx=vx,
+            wz=wz,
+        )
+        main_metrics = {k: main_metrics[k] + new_main_metrics[k] for k in main_metrics}
+        return main_metrics
+
+
+    def create_adaptation_metrics(
         self, 
         p1: float,
         p2: float,
@@ -913,11 +963,57 @@ class MetricManager:
 
         return gp_damage_introspection_metrics, learnt_state_functions_metrics, adaptation_metrics
 
+    def add_adaptation_metrics(
+        self, 
+        gp_damage_introspection_metrics: Dict,
+        learnt_state_functions_metrics: Dict,
+        adaptation_metrics: Dict,
+        p1: float,
+        p2: float,
+        a: float,
+        b: float,
+        c: float,
+        d: float,
+        offset: float,
+        human_cmd_lin_x: float,
+        human_cmd_ang_z: float,
+        adaptation_cmd_lin_x: float,
+        adaptation_cmd_ang_z: float,
+        perturbation_cmd_lin_x: float,
+        perturbation_cmd_ang_z: float,
+    ) -> Tuple[Dict, Dict, Dict]:
+
+        (
+            new_gp_damage_introspection_metrics, 
+            new_learnt_state_functions_metrics, 
+            new_adaptation_metrics,
+        ) = self.create_adaptation_metrics(
+            p1=p1,
+            p2=p2,
+            a=a,
+            b=b,
+            c=c,
+            d=d,
+            offset=offset,
+            human_cmd_lin_x=human_cmd_lin_x,
+            human_cmd_ang_z=human_cmd_ang_z,
+            adaptation_cmd_lin_x=adaptation_cmd_lin_x,
+            adaptation_cmd_ang_z=adaptation_cmd_ang_z,
+            perturbation_cmd_lin_x=perturbation_cmd_lin_x,
+            perturbation_cmd_ang_z=perturbation_cmd_ang_z,
+        )
+        gp_damage_introspection_metrics = {k: gp_damage_introspection_metrics[k] + new_gp_damage_introspection_metrics[k] for k in gp_damage_introspection_metrics}
+        learnt_state_functions_metrics = {k: learnt_state_functions_metrics[k] + new_learnt_state_functions_metrics[k] for k in learnt_state_functions_metrics}
+        adaptation_metrics = {k: adaptation_metrics[k] + new_adaptation_metrics[k] for k in adaptation_metrics}
+        return gp_damage_introspection_metrics, learnt_state_functions_metrics, adaptation_metrics
+
 
     def create_metrics_rep(self, rep: int) -> None:
 
+        self.empty_metrics()
+
         # Main metrics
-        main_metrics = self.main_metrics(0, 0, 0, "", 0, "", 0, 0, 0, 0, 0, 0, 0, 0, 0)
+        main_metrics = self.create_main_metrics(0, 0, 0, "", 0, "", 0, 0, 0, 0, 0, 0, 0, 0, 0)
         self.rep_main_file_name = f"{self.folder}/{self.circuit}_replication_main_{rep}.csv"
         self._create_metrics(
             file_name=self.rep_main_file_name,
@@ -926,12 +1022,16 @@ class MetricManager:
         )
 
         # Adaptation metrics
-        gp_damage_introspection_metrics, learnt_state_functions_metrics, adaptation_metrics = self.adaptation_metrics(
+        (
+            gp_damage_introspection_metrics, 
+            learnt_state_functions_metrics, 
+            adaptation_metrics ,
+        ) = self.create_adaptation_metrics(
                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
         )
 
         self.rep_gp_damage_introspection_file_name = (
-            f"{self.folder}/gp_damage_introspection_{rep}_{self.common_file_name}.csv"
+            f"{self.folder}/{self.circuit}_replication_gp_damage_introspection_{rep}.csv"
         )
         self._create_metrics(
             file_name=self.rep_gp_damage_introspection_file_name,
@@ -940,7 +1040,7 @@ class MetricManager:
         )
 
         self.rep_learnt_state_functions_file_name = (
-            f"{self.folder}/learnt_state_functions_{rep}_{self.common_file_name}.csv"
+            f"{self.folder}/{self.circuit}_replication_learnt_state_functions_{rep}.csv"
         )
         self._create_metrics(
             file_name=self.rep_learnt_state_functions_file_name,
@@ -949,7 +1049,7 @@ class MetricManager:
         )
 
         self.rep_adaptation_file_name = (
-            f"{self.folder}/adaptation_{rep}_{self.common_file_name}.csv"
+            f"{self.folder}/{self.circuit}_replication_adaptation_{rep}.csv"
         )
         self._create_metrics(
             file_name=self.rep_adaptation_file_name,
@@ -959,11 +1059,46 @@ class MetricManager:
 
         # If saving html, create a folder to save data
         if self.save_html:
-            self.rep_html_file_name = f"{self.folder}/html_{rep}_{self.common_file_name}.html"
+            self.rep_html_file_name = f"{self.folder}/{self.circuit}_replication_html_{rep}.html"
             self.rollout = []
             print(f"  Saving html in {self.rep_html_file_name}.")
     
-    def save_main_metrics_rep(
+    def save_metrics_rep(self, env_sys: Any) -> None:
+
+        # Save all metrics
+        self._save_metrics(
+            file_name=self.main_file_name,
+            metrics=self.main_metrics,
+        )
+        self._save_metrics(
+            file_name=self.rep_main_file_name,
+            metrics=self.main_metrics,
+        )
+        self._save_metrics(
+            file_name=self.rep_gp_damage_introspection_file_name,
+            metrics=self.gp_damage_introspection_metrics,
+        )
+        self._save_metrics(
+            file_name=self.rep_learnt_state_functions_file_name,
+            metrics=self.learnt_state_functions_metrics,
+        )
+        self._save_metrics(
+            file_name=self.rep_adaptation_file_name,
+            metrics=self.adaptation_metrics,
+        )
+
+        # Save html
+        if self.save_html:
+            html_file = html.render(env_sys, [s.pipeline_state for s in self.rollout])
+            f = open(self.rep_html_file_name, "w")
+            f.write(html_file)
+            f.close()
+
+        # Empty everything
+        self.empty_metrics()
+
+
+    def add_main_metrics_rep(
         self, 
         env_state: Any, 
         time: int,
@@ -972,11 +1107,7 @@ class MetricManager:
         damage_type: str,
         scaling_value: float,
         section: str,
-        #section_start_time: int,
-        #section_end_time: int,
         lap: int,
-        #lap_start_time: int,
-        #lap_end_time: int,
         target_tx: float,
         target_ty: float,
         tx: float,
@@ -987,44 +1118,49 @@ class MetricManager:
         wz: float,
     ) -> None:
 
-        # Create metrics
-        main_metrics = self.main_metrics(
-            time=time,
-            timestep=timestep,
-            rep=rep,
-            damage_type=damage_type,
-            scaling_value=scaling_value,
-            section=section,
-            #section_start_time=section_start_time,
-            #section_end_time=section_end_time,
-            lap=lap,
-            #lap_start_time=lap_start_time,
-            #lap_end_time=lap_end_time,
-            target_tx=target_tx,
-            target_ty=target_ty,
-            tx=tx,
-            ty=ty,
-            human_cmd_lin_x=human_cmd_lin_x,
-            human_cmd_ang_z=human_cmd_ang_z,
-            vx=vx,
-            wz=wz,
-        )
+        if self.main_metrics == {}:
+            self.main_metrics = self.create_main_metrics(
+                time=time,
+                timestep=timestep,
+                rep=rep,
+                damage_type=damage_type,
+                scaling_value=scaling_value,
+                section=section,
+                lap=lap,
+                target_tx=target_tx,
+                target_ty=target_ty,
+                tx=tx,
+                ty=ty,
+                human_cmd_lin_x=human_cmd_lin_x,
+                human_cmd_ang_z=human_cmd_ang_z,
+                vx=vx,
+                wz=wz,
+            )
+        else:
+            self.main_metrics = self.add_main_metrics(
+                main_metrics=self.main_metrics,
+                time=time,
+                timestep=timestep,
+                rep=rep,
+                damage_type=damage_type,
+                scaling_value=scaling_value,
+                section=section,
+                lap=lap,
+                target_tx=target_tx,
+                target_ty=target_ty,
+                tx=tx,
+                ty=ty,
+                human_cmd_lin_x=human_cmd_lin_x,
+                human_cmd_ang_z=human_cmd_ang_z,
+                vx=vx,
+                wz=wz,
+            )
         
-        # Save
-        self._save_metrics(
-            file_name=self.main_file_name,
-            metrics=main_metrics,
-        )
-        self._save_metrics(
-            file_name=self.rep_main_file_name,
-            metrics=main_metrics,
-        )
-
         # If saving html
         if self.save_html:
             self.rollout.append(env_state)
 
-    def save_adaptation_metrics_rep(
+    def add_adaptation_metrics_rep(
         self, 
         p1: float,
         p2: float,
@@ -1041,45 +1177,49 @@ class MetricManager:
         perturbation_cmd_ang_z: float,
     ) -> None:
 
-        # Create metrics
-        gp_damage_introspection_metrics, learnt_state_functions_metrics, adaptation_metrics = self.adaptation_metrics(
-            p1=p1,
-            p2=p2,
-            a=a,
-            b=b,
-            c=c,
-            d=d,
-            offset=offset,
-            human_cmd_lin_x=human_cmd_lin_x,
-            human_cmd_ang_z=human_cmd_ang_z,
-            adaptation_cmd_lin_x=adaptation_cmd_lin_x,
-            adaptation_cmd_ang_z=adaptation_cmd_ang_z,
-            perturbation_cmd_lin_x=perturbation_cmd_lin_x,
-            perturbation_cmd_ang_z=perturbation_cmd_ang_z,
-        )
-
-        # Save
-        self._save_metrics(
-            file_name=self.rep_gp_damage_introspection_file_name,
-            metrics=gp_damage_introspection_metrics,
-        )
-        self._save_metrics(
-            file_name=self.rep_learnt_state_functions_file_name,
-            metrics=learnt_state_functions_metrics,
-        )
-        self._save_metrics(
-            file_name=self.rep_adaptation_file_name,
-            metrics=adaptation_metrics,
-        )
-
-
-    def save_html_metrics(self, env_sys: Any) -> None:
-        if self.save_html:
-            html_file = html.render(env_sys, [s.pipeline_state for s in self.rollout])
-            f = open(self.rep_html_file_name, "w")
-            f.write(html_file)
-            f.close()
-
+        if self.gp_damage_introspection_metrics == {}:
+            (
+                self.gp_damage_introspection_metrics, 
+                self.learnt_state_functions_metrics, 
+                self.adaptation_metrics,
+            ) = self.create_adaptation_metrics(
+                p1=p1,
+                p2=p2,
+                a=a,
+                b=b,
+                c=c,
+                d=d,
+                offset=offset,
+                human_cmd_lin_x=human_cmd_lin_x,
+                human_cmd_ang_z=human_cmd_ang_z,
+                adaptation_cmd_lin_x=adaptation_cmd_lin_x,
+                adaptation_cmd_ang_z=adaptation_cmd_ang_z,
+                perturbation_cmd_lin_x=perturbation_cmd_lin_x,
+                perturbation_cmd_ang_z=perturbation_cmd_ang_z,
+            )
+        else:
+            (
+                self.gp_damage_introspection_metrics, 
+                self.learnt_state_functions_metrics, 
+                self.adaptation_metrics,
+            ) = self.add_adaptation_metrics(
+                gp_damage_introspection_metrics=self.gp_damage_introspection_metrics,
+                learnt_state_functions_metrics=self.learnt_state_functions_metrics,
+                adaptation_metrics=self.adaptation_metrics,
+                p1=p1,
+                p2=p2,
+                a=a,
+                b=b,
+                c=c,
+                d=d,
+                offset=offset,
+                human_cmd_lin_x=human_cmd_lin_x,
+                human_cmd_ang_z=human_cmd_ang_z,
+                adaptation_cmd_lin_x=adaptation_cmd_lin_x,
+                adaptation_cmd_ang_z=adaptation_cmd_ang_z,
+                perturbation_cmd_lin_x=perturbation_cmd_lin_x,
+                perturbation_cmd_ang_z=perturbation_cmd_ang_z,
+            )
 
     def save_gp_collection_configuration(self) -> None:
         """Same content as /gp_collection_configuration in influx."""
@@ -1168,8 +1308,8 @@ class MetricManager:
 
         config = {
             "path": str(path),
-            "small_loop": str(wind_path),
-            "chicane": str(chicane_path),
+            "small_loop": str(wind_path * wind_number_laps),
+            "chicane": str(chicane_path * chicane_number_laps),
             "scaling": str(scaling),
             "scaling_sides": str(scaling_side),
             "scaling_amplitudes": str(scaling_amplitude),
@@ -1256,16 +1396,20 @@ if __name__ == "__main__":
 
     # Circuit initialisation 
     if args.circuit == "chicane_static":
-        path = chicane_path
+        path = chicane_path * chicane_number_laps
+        number_laps = chicane_number_laps
         section = "Chicane"
     elif args.circuit == "chicane_dynamic":
-        path = chicane_path
+        path = chicane_path * chicane_number_laps
+        number_laps = chicane_number_laps
         section = "Chicane"
     elif args.circuit == "chicane_broken_leg":
-        path = chicane_path
+        path = chicane_path * chicane_number_laps
+        number_laps = chicane_number_laps
         section = "Chicane"
     elif args.circuit == "wind":
-        path = wind_path
+        path = wind_path * wind_number_laps
+        number_laps = wind_number_laps
         section = "Wind"
     else:
         assert 0, "!!!ERROR!!! Undefined circuit."
@@ -1323,7 +1467,7 @@ if __name__ == "__main__":
     )
 
     # Driver initialisation
-    driver = Driver(path=path)
+    driver = Driver(path=path, number_laps=number_laps)
     min_driver_speed, max_driver_speed = driver.get_driver_configuration()
 
     # Save all the configurations
@@ -1361,6 +1505,10 @@ if __name__ == "__main__":
         driver.reset()
         driver_done = False
 
+        # Reset FLAIR
+        buffer_initialised = False
+        flair.reset()
+
         # Get the first sensor reading from the environment
         (
             state,
@@ -1386,7 +1534,7 @@ if __name__ == "__main__":
         time = time_to_utc_timestamp(timestep, sim_start=sim_start)
 
         # Save the first metrics for this rep
-        metric_manager.save_main_metrics_rep(
+        metric_manager.add_main_metrics_rep(
             env_state=env_state,
             time=time, 
             timestep=timestep,
@@ -1440,9 +1588,13 @@ if __name__ == "__main__":
                 adaptation_cmd_ang_z, 
                 state,
             )
+            print(f"Human: {human_cmd_lin_x}, {human_cmd_ang_z}.")
+            print(f"Adapt: {adaptation_cmd_lin_x}, {adaptation_cmd_ang_z}.")
+            print(f"Targets: {driver.target_tx}, {driver.target_ty}.")
+            print(f"Sensors: {sensor_tx}, {sensor_ty}.")
 
             # Fourth, save the adaptation metrics
-            metric_manager.save_adaptation_metrics_rep(
+            metric_manager.add_adaptation_metrics_rep(
                 p1=flair.p1,
                 p2=flair.p2,
                 a=flair.a,
@@ -1458,7 +1610,7 @@ if __name__ == "__main__":
                 perturbation_cmd_ang_z=perturbation_cmd_ang_z,
             )
 
-            # Fith, apply it for command_sensor_ratio timesteps
+            # Sixth, apply it for command_sensor_ratio timesteps
             for sensor_timestep in range(args.command_sensor_ratio):
 
                 timestep += 1
@@ -1488,33 +1640,27 @@ if __name__ == "__main__":
                     sensor_wz,
                 ) = env_manager.get_sensor()
 
-                # Add to the adaptation dataset
+                # Add to the buffers for FLAIR
                 sensor_time = ROSTimestamp(timestep)
-                flair.add_datapoint(
-                    state=state,
-                    sensor_time=sensor_time,
-                    sensor_tx=sensor_tx,
-                    sensor_ty=sensor_ty,
-                    sensor_tz=sensor_tz,
-                    sensor_vx=sensor_vx,
-                    sensor_vy=sensor_vy,
-                    sensor_vz=sensor_vz,
-                    sensor_yaw=sensor_yaw,
-                    sensor_roll=sensor_roll,
-                    sensor_pitch=sensor_pitch,
-                    sensor_wx=sensor_wx,
-                    sensor_wy=sensor_wy,
-                    sensor_wz=sensor_wz,
-                    adaptation_cmd_lin_x=adaptation_cmd_lin_x, 
-                    adaptation_cmd_ang_z=adaptation_cmd_ang_z, 
-                    gp_prediction_x=gp_prediction_x, 
-                    gp_prediction_y=gp_prediction_y, 
-                    human_cmd_lin_x=human_cmd_lin_x, 
-                    human_cmd_ang_z=human_cmd_ang_z,
-                )
+                if not buffer_initialised:
+                    buffer_state = np.array([state])
+                    buffer_sensor_time = np.array([[sensor_time]])
+                    buffer_sensor_vx = np.array([[sensor_vx]])
+                    buffer_sensor_wx = np.array([[sensor_wx]])
+                    buffer_sensor_wy = np.array([[sensor_wy]])
+                    buffer_sensor_wz = np.array([[sensor_wz]])
+                    buffer_initialised = True
+                else:
+                    buffer_state =  np.append(buffer_state, [state], axis=0)
+                    buffer_sensor_time = np.append(buffer_sensor_time, [[sensor_time]], axis=0)
+                    buffer_sensor_vx = np.append(buffer_sensor_vx, [[sensor_vx]], axis=0)
+                    buffer_sensor_wx = np.append(buffer_sensor_wx, [[sensor_wx]], axis=0)
+                    buffer_sensor_wy = np.append(buffer_sensor_wy, [[sensor_wy]], axis=0)
+                    buffer_sensor_wz = np.append(buffer_sensor_wz, [[sensor_wz]], axis=0)
+                    buffer_initialised = True
 
                 # Save the metrics
-                metric_manager.save_main_metrics_rep(
+                metric_manager.add_main_metrics_rep(
                     env_state=env_state,
                     time=time,
                     timestep=timestep,
@@ -1533,7 +1679,24 @@ if __name__ == "__main__":
                     wz=sensor_wz,
                 )
 
+            # Add to the adaptation dataset
+            flair.add_datapoint(
+                state=buffer_state,
+                sensor_time=buffer_sensor_time,
+                sensor_vx=buffer_sensor_vx,
+                sensor_wx=buffer_sensor_wx,
+                sensor_wy=buffer_sensor_wy,
+                sensor_wz=buffer_sensor_wz,
+                adaptation_cmd_lin_x=adaptation_cmd_lin_x, 
+                adaptation_cmd_ang_z=adaptation_cmd_ang_z, 
+                gp_prediction_x=gp_prediction_x, 
+                gp_prediction_y=gp_prediction_y, 
+                human_cmd_lin_x=human_cmd_lin_x, 
+                human_cmd_ang_z=human_cmd_ang_z,
+            )
+            buffer_initialised = False
+
         # Save the html
-        metric_manager.save_html_metrics(env_manager.env.sys)
+        metric_manager.save_metrics_rep(env_manager.env.sys)
     print(f"\nDone with all replications and runs.")
 
