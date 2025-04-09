@@ -4,6 +4,7 @@ import time
 import csv
 import argparse
 from copy import deepcopy
+from functools import partial
 
 import numpy as np
 from typing import Tuple, Dict, Any
@@ -529,7 +530,7 @@ class EnvironmentManager:
             self.env,
             _,
             init_policies_fn,
-            self.policy_structure,
+            policy_structure,
             min_bd,
             max_bd,
             _,
@@ -545,7 +546,7 @@ class EnvironmentManager:
         self.dt = self.env.sys.config.dt
         #self.repetitions = max(round((1 / sensor_freq) / self.dt), 1)
         #print(f"\n    Returning a sensor every {1 / sensor_freq} and using simulation dt of {self.dt}.")
-        self.repetitions = 5
+        self.repetitions = int(5)
         print(f"    Repeating the environment {self.repetitions} times between sensor readings.")
 
         # Get the grid resolution
@@ -584,21 +585,59 @@ class EnvironmentManager:
         self.cmd_ang_z = None
         self.params = None
         self.timestep = 0
-        self.inference_fn = jax.jit(self.policy_structure.apply)
+
+        # Prepare the evaluation functions
+        self.inference_fn = jax.jit(policy_structure.apply)
+        self.reset_fn = jax.jit(self.env.reset)
+        self.step_fn = jax.jit(self.env.step)
+        self.random_key, subkey = jax.random.split(self.random_key)
+        self.env_state = self.reset_fn(subkey)
+
+        #@partial(jax.jit, static_argnames=("play_step_fn", "length"))
+        #def generate_unroll_time(
+        #    env_state: Any,
+        #    timestep: int,
+        #    policy_params: jnp.ndarray,
+        #    random_key: jax.random.key,
+        #    length: int,
+        #    play_step_fn: Any,
+        #) -> Tuple[Any, jnp.ndarray, int]:
+
+        #    def _scan_play_step_fn(
+        #        carry: Tuple[Any, jnp.ndarray, jax.random.key, int], unused_arg: Any
+        #    ) -> Tuple[Tuple[Any, jnp.ndarray, jax.random.key, int], jnp.ndarray]:
+        #        env_state, policy_params, random_key, transitions, timestep = play_step_fn(
+        #            *carry
+        #        )
+        #        return (env_state, policy_params, random_key, timestep), transitions
+
+        #    (state, _, _, timestep), transitions = jax.lax.scan(
+        #        _scan_play_step_fn,
+        #        (env_state, policy_params, random_key, timestep),  
+        #        (),
+        #        length=length,
+        #    )
+        #    return state, transitions, timestep
+
+        #self.generate_unroll_time = jax.jit(partial(
+        #    generate_unroll_time, 
+        #    length=self.repetitions, 
+        #    play_step_fn=play_step_fn,
+        #))
+
 
     def get_grid_details(self) -> Tuple[np.ndarray, float, float]:
         return self.grid_resolution, self.min_command, self.max_command
 
     def reset(self) -> Any:
         self.random_key, subkey = jax.random.split(self.random_key)
-        self.env_state = self.env.reset(subkey)
+        self.env_state = self.reset_fn(subkey)
         return self.env_state
 
     def step(self, cmd_lin_x: float, cmd_ang_z: float) -> Any:
 
         # Get the corresponding controller from the map
         if self.cmd_lin_x == None or self.cmd_ang_z == None or cmd_lin_x != self.cmd_lin_x or cmd_ang_z != self.cmd_ang_z:
-            print("  New controller")
             batch_of_descriptors = jnp.expand_dims(jnp.asarray([cmd_lin_x, cmd_ang_z]), axis=0)
             indices = get_cells_indices(
                 batch_of_descriptors=batch_of_descriptors, 
@@ -618,11 +657,7 @@ class EnvironmentManager:
             self.timestep += 1
 
             # Apply it in the environment
-            self.env_state = self.env.step(self.env_state, action)
-            if self.env_state.qp.pos[0][0] == 0:
-                print("x is 0")
-            if self.env_state.done:
-                print("Done")
+            self.env_state = self.step_fn(self.env_state, action)
 
         return self.env_state
 
@@ -1477,6 +1512,61 @@ if __name__ == "__main__":
     # Environment initialisation 
     env_manager = EnvironmentManager(map_elites_map=args.map_elites_map, sensor_freq=args.sensor_freq)
     grid_resolution, min_command, max_command = env_manager.get_grid_details()
+    
+    """
+    # Some timing debug
+    start_t = time.time()
+    env_state = env_manager.env.reset(env_manager.random_key)
+    print(f"\n\nReset took {time.time() - start_t}.")
+
+    cmd_lin_x = 0.0
+    cmd_ang_z = 0.1
+
+    start_t = time.time()
+    batch_of_descriptors = jnp.expand_dims(jnp.asarray([cmd_lin_x, cmd_ang_z]), axis=0)
+    indices = get_cells_indices(
+        batch_of_descriptors=batch_of_descriptors, 
+        centroids=env_manager.repertoire.centroids,
+    )
+    params = jax.tree_util.tree_map(
+        lambda x: x[indices].squeeze(), env_manager.repertoire.genotypes
+    )
+    timestep = 0
+    jax.tree_util.tree_map(
+        lambda x: x.block_until_ready(), params
+    )  # ensure timing accuracy
+    print(f"\n\nLoading parameters took {time.time() - start_t}.")
+
+    start_t = time.time()
+    action = env_manager.inference_fn(params, env_state, timestep)
+    jax.tree_util.tree_map(
+        lambda x: x.block_until_ready(), action
+    )  # ensure timing accuracy
+    print(f"\n\nInference took {time.time() - start_t}.")
+
+    start_t = time.time()
+    env_step = jax.jit(env_manager.env.step)
+    print(f"\n\nStep jitting took {time.time() - start_t}.")
+
+    # Apply it in the environment
+    start_t = time.time()
+    env_state = env_step(env_state, action)
+    print(f"\n\nEnvironment-only step took {time.time() - start_t}.")
+
+    start_t = time.time()
+    for _ in range (5):
+        env_state = env_step(env_state, action)
+    print(f"\n\n5 steps took {time.time() - start_t}.")
+
+    start_t = time.time()
+    env_state = env_manager.step(
+        cmd_lin_x=0.0,
+        cmd_ang_z=0.1,
+    )
+    print(f"\n\nEnvironment-manager step with {env_manager.repetitions} repetitions took {time.time() - start_t}.")
+
+
+    """
 
     # Perturbation initialisation
     perturbation_manager = PerturbationManager(
@@ -1588,170 +1678,178 @@ if __name__ == "__main__":
         print(f"Done initialising and reseting, took: {time.time() - start_rep_t}.")
         print(f"\n  Driver starting.")
 
-        # While not done with the path
-        call_since_last_training = 0
-        while not driver_done:
+        try:
 
-            debug_start_t = time.time()
+            # While not done with the path
+            call_since_last_training = 0
+            while not driver_done:
 
-            # First, train the model if necessary
-            if call_since_last_training >= args.model_command_ratio and not args.adaptation_off:
-                print(f"    Debug - Training model.")
-                flair.train_model()
-                call_since_last_training = 0
-                print(f"    Debug - Done training model, took: {time.time() - debug_start_t}.")
-            else:
-                call_since_last_training += 1
+                # debug_start_t = time.time()
 
-            # Second, get the velocity command from the driver
-            driver_done, human_cmd_lin_x, human_cmd_ang_z = driver.follow_path(
-                x_pos=sensor_tx,
-                y_pos=sensor_ty,
-                quaternion=quaternion,
-            )
+                # First, train the model if necessary
+                if call_since_last_training >= args.model_command_ratio and not args.adaptation_off:
+                    print(f"    Debug - Training model.")
+                    flair.train_model()
+                    call_since_last_training = 0
+                    # print(f"    Debug - Done training model, took: {time.time() - debug_start_t}.")
+                else:
+                    call_since_last_training += 1
 
-            # Third, get the corresponding adaptation
-            (
-                adaptation_cmd_lin_x, 
-                adaptation_cmd_ang_z, 
-                gp_prediction_x, 
-                gp_prediction_y, 
-                human_cmd_lin_x, 
-                human_cmd_ang_z,
-            ) = flair.get_command(
-                human_cmd_lin_x=human_cmd_lin_x, 
-                human_cmd_ang_z=human_cmd_ang_z,
-                state=state,
-            )
-
-            # Fourth, apply the perturbation
-            (
-                perturbation_cmd_lin_x, 
-                perturbation_cmd_ang_z, 
-            ) = perturbation_manager.apply_perturbation(
-                adaptation_cmd_lin_x, 
-                adaptation_cmd_ang_z, 
-                state,
-            )
-            print(f"    Debug - Human: {human_cmd_lin_x}, {human_cmd_ang_z}.")
-            print(f"    Debug - Adapt: {adaptation_cmd_lin_x}, {adaptation_cmd_ang_z}.")
-            print(f"    Debug - Targets: {driver.target_tx}, {driver.target_ty}.")
-            print(f"    Debug - Sensors: {sensor_tx}, {sensor_ty}.")
-
-            # Fifth, save the adaptation metrics
-            metric_manager.add_adaptation_metrics_rep(
-                p1=flair.p1,
-                p2=flair.p2,
-                a=flair.a,
-                b=flair.b,
-                c=flair.c,
-                d=flair.d,
-                offset=flair.offset,
-                human_cmd_lin_x=human_cmd_lin_x,
-                human_cmd_ang_z=human_cmd_ang_z,
-                adaptation_cmd_lin_x=adaptation_cmd_lin_x,
-                adaptation_cmd_ang_z=adaptation_cmd_ang_z,
-                perturbation_cmd_lin_x=perturbation_cmd_lin_x,
-                perturbation_cmd_ang_z=perturbation_cmd_ang_z,
-            )
-
-            print(f"    Debug - Pre-env time: {time.time() - debug_start_t}.")
-            debug_start_t = time.time()
-
-            # Sixth, apply it for command_sensor_ratio timesteps
-            for sensor_timestep in range(args.command_sensor_ratio):
-
-                timestep += 1
-                timing = timestep_to_utc_timestamp(timestep, sim_start=sim_start, rate_hz=args.sensor_freq)
-
-                # Step the environment
-                env_state = env_manager.step(
-                    cmd_lin_x=perturbation_cmd_lin_x,
-                    cmd_ang_z=adaptation_cmd_ang_z,
+                # Second, get the velocity command from the driver
+                driver_done, human_cmd_lin_x, human_cmd_ang_z = driver.follow_path(
+                    x_pos=sensor_tx,
+                    y_pos=sensor_ty,
+                    quaternion=quaternion,
                 )
 
-                # Get new sensor reading
+                # Third, get the corresponding adaptation
                 (
+                    adaptation_cmd_lin_x, 
+                    adaptation_cmd_ang_z, 
+                    gp_prediction_x, 
+                    gp_prediction_y, 
+                    human_cmd_lin_x, 
+                    human_cmd_ang_z,
+                ) = flair.get_command(
+                    human_cmd_lin_x=human_cmd_lin_x, 
+                    human_cmd_ang_z=human_cmd_ang_z,
+                    state=state,
+                )
+
+                # Fourth, apply the perturbation
+                (
+                    perturbation_cmd_lin_x, 
+                    perturbation_cmd_ang_z, 
+                ) = perturbation_manager.apply_perturbation(
+                    adaptation_cmd_lin_x, 
+                    adaptation_cmd_ang_z, 
                     state,
-                    quaternion,
-                    sensor_tx,
-                    sensor_ty,
-                    sensor_tz,
-                    sensor_vx,
-                    sensor_vy,
-                    sensor_vz,
-                    sensor_yaw,
-                    sensor_roll,
-                    sensor_pitch,
-                    sensor_wx,
-                    sensor_wy,
-                    sensor_wz,
-                ) = env_manager.get_sensor()
+                )
+                # print(f"    Debug - Human: {human_cmd_lin_x}, {human_cmd_ang_z}.")
+                # print(f"    Debug - Adapt: {adaptation_cmd_lin_x}, {adaptation_cmd_ang_z}.")
+                # print(f"    Debug - Targets: {driver.target_tx}, {driver.target_ty}.")
+                # print(f"    Debug - Sensors: {sensor_tx}, {sensor_ty}.")
 
-                # Add to the buffers for FLAIR
-                sensor_time = ROSTimestamp(timestep, args.sensor_freq)
-                if not buffer_initialised:
-                    buffer_state = np.array([state])
-                    buffer_sensor_time = np.array([[sensor_time]])
-                    buffer_sensor_vx = np.array([[sensor_vx]])
-                    buffer_sensor_wx = np.array([[sensor_wx]])
-                    buffer_sensor_wy = np.array([[sensor_wy]])
-                    buffer_sensor_wz = np.array([[sensor_wz]])
-                    buffer_initialised = True
-                else:
-                    buffer_state =  np.append(buffer_state, [state], axis=0)
-                    buffer_sensor_time = np.append(buffer_sensor_time, [[sensor_time]], axis=0)
-                    buffer_sensor_vx = np.append(buffer_sensor_vx, [[sensor_vx]], axis=0)
-                    buffer_sensor_wx = np.append(buffer_sensor_wx, [[sensor_wx]], axis=0)
-                    buffer_sensor_wy = np.append(buffer_sensor_wy, [[sensor_wy]], axis=0)
-                    buffer_sensor_wz = np.append(buffer_sensor_wz, [[sensor_wz]], axis=0)
-                    buffer_initialised = True
-
-                # Save the metrics
-                metric_manager.add_main_metrics_rep(
-                    env_state=env_state,
-                    timing=timing,
-                    timestep=timestep,
-                    rep=rep,
-                    damage_type=damage_type,
-                    scaling_value=scaling_value,
-                    section=section,
-                    lap=driver.lap,
-                    target_tx=driver.target_tx,
-                    target_ty=driver.target_ty,
-                    tx=sensor_tx,
-                    ty=sensor_ty,
+                # Fifth, save the adaptation metrics
+                metric_manager.add_adaptation_metrics_rep(
+                    p1=flair.p1,
+                    p2=flair.p2,
+                    a=flair.a,
+                    b=flair.b,
+                    c=flair.c,
+                    d=flair.d,
+                    offset=flair.offset,
                     human_cmd_lin_x=human_cmd_lin_x,
                     human_cmd_ang_z=human_cmd_ang_z,
-                    vx=sensor_vx,
-                    wz=sensor_wz,
+                    adaptation_cmd_lin_x=adaptation_cmd_lin_x,
+                    adaptation_cmd_ang_z=adaptation_cmd_ang_z,
+                    perturbation_cmd_lin_x=perturbation_cmd_lin_x,
+                    perturbation_cmd_ang_z=perturbation_cmd_ang_z,
                 )
 
-            print(f"    Debug - Env steps time: {time.time() - debug_start_t}.")
-            debug_start_t = time.time()
+                # print(f"    Debug - Pre-env time: {time.time() - debug_start_t}.")
+                # debug_start_t = time.time()
 
-            # Add to the adaptation dataset
-            flair.add_datapoint(
-                state=buffer_state,
-                sensor_time=buffer_sensor_time,
-                sensor_vx=buffer_sensor_vx,
-                sensor_wx=buffer_sensor_wx,
-                sensor_wy=buffer_sensor_wy,
-                sensor_wz=buffer_sensor_wz,
-                adaptation_cmd_lin_x=adaptation_cmd_lin_x, 
-                adaptation_cmd_ang_z=adaptation_cmd_ang_z, 
-                gp_prediction_x=gp_prediction_x, 
-                gp_prediction_y=gp_prediction_y, 
-                human_cmd_lin_x=human_cmd_lin_x, 
-                human_cmd_ang_z=human_cmd_ang_z,
-            )
-            buffer_initialised = False
+                # Sixth, apply it for command_sensor_ratio timesteps
+                for sensor_timestep in range(args.command_sensor_ratio):
 
-            print(f"    Debug - Data Collection time: {time.time() - debug_start_t}.")
+                    timestep += 1
+                    timing = timestep_to_utc_timestamp(timestep, sim_start=sim_start, rate_hz=args.sensor_freq)
+
+                    # Step the environment
+                    env_state = env_manager.step(
+                        cmd_lin_x=perturbation_cmd_lin_x,
+                        cmd_ang_z=adaptation_cmd_ang_z,
+                    )
+
+                    # Get new sensor reading
+                    (
+                        state,
+                        quaternion,
+                        sensor_tx,
+                        sensor_ty,
+                        sensor_tz,
+                        sensor_vx,
+                        sensor_vy,
+                        sensor_vz,
+                        sensor_yaw,
+                        sensor_roll,
+                        sensor_pitch,
+                        sensor_wx,
+                        sensor_wy,
+                        sensor_wz,
+                    ) = env_manager.get_sensor()
+
+                    # Add to the buffers for FLAIR
+                    sensor_time = ROSTimestamp(timestep, args.sensor_freq)
+                    if not buffer_initialised:
+                        buffer_state = np.array([state])
+                        buffer_sensor_time = np.array([[sensor_time]])
+                        buffer_sensor_vx = np.array([[sensor_vx]])
+                        buffer_sensor_wx = np.array([[sensor_wx]])
+                        buffer_sensor_wy = np.array([[sensor_wy]])
+                        buffer_sensor_wz = np.array([[sensor_wz]])
+                        buffer_initialised = True
+                    else:
+                        buffer_state =  np.append(buffer_state, [state], axis=0)
+                        buffer_sensor_time = np.append(buffer_sensor_time, [[sensor_time]], axis=0)
+                        buffer_sensor_vx = np.append(buffer_sensor_vx, [[sensor_vx]], axis=0)
+                        buffer_sensor_wx = np.append(buffer_sensor_wx, [[sensor_wx]], axis=0)
+                        buffer_sensor_wy = np.append(buffer_sensor_wy, [[sensor_wy]], axis=0)
+                        buffer_sensor_wz = np.append(buffer_sensor_wz, [[sensor_wz]], axis=0)
+                        buffer_initialised = True
+
+                    # Save the metrics
+                    metric_manager.add_main_metrics_rep(
+                        env_state=env_state,
+                        timing=timing,
+                        timestep=timestep,
+                        rep=rep,
+                        damage_type=damage_type,
+                        scaling_value=scaling_value,
+                        section=section,
+                        lap=driver.lap,
+                        target_tx=driver.target_tx,
+                        target_ty=driver.target_ty,
+                        tx=sensor_tx,
+                        ty=sensor_ty,
+                        human_cmd_lin_x=human_cmd_lin_x,
+                        human_cmd_ang_z=human_cmd_ang_z,
+                        vx=sensor_vx,
+                        wz=sensor_wz,
+                    )
+
+                # print(f"    Debug - Env steps time: {time.time() - debug_start_t}.")
+                # debug_start_t = time.time()
+
+                # Add to the adaptation dataset
+                flair.add_datapoint(
+                    state=buffer_state,
+                    sensor_time=buffer_sensor_time,
+                    sensor_vx=buffer_sensor_vx,
+                    sensor_wx=buffer_sensor_wx,
+                    sensor_wy=buffer_sensor_wy,
+                    sensor_wz=buffer_sensor_wz,
+                    adaptation_cmd_lin_x=adaptation_cmd_lin_x, 
+                    adaptation_cmd_ang_z=adaptation_cmd_ang_z, 
+                    gp_prediction_x=gp_prediction_x, 
+                    gp_prediction_y=gp_prediction_y, 
+                    human_cmd_lin_x=human_cmd_lin_x, 
+                    human_cmd_ang_z=human_cmd_ang_z,
+                )
+                buffer_initialised = False
+
+                # print(f"    Debug - Data Collection time: {time.time() - debug_start_t}.")
+
+            print(f"Done with rep {rep + 1} / {args.num_reps}, took: {time.time() - start_rep_t}.")
+
+        except Exception:
+            print(f"Failed rep {rep + 1} / {args.num_reps}, took: {time.time() - start_rep_t}.")
+            print("Still saving the metrics and html.")
+            traceback.print_exc()
 
         # Save the metrics
         metric_manager.save_metrics_rep(env_manager.env.sys)
-        print(f"Done with rep {rep + 1} / {args.num_reps}, took: {time.time() - start_rep_t}")
 
     print(f"\nDone with all replications and runs, took {time.time() - start_t}")
 
