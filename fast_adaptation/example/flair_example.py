@@ -2,6 +2,7 @@ import sys
 import os
 import time
 import csv
+import traceback
 import argparse
 from copy import deepcopy
 from functools import partial
@@ -100,9 +101,9 @@ class Driver:
         self.number_laps = number_laps
 
         # Parameters
-        self.error_threshold = 0.1
-        self.min_driver_speed = 0.02
-        self.max_driver_speed = 0.1
+        self.error_threshold = 0.5
+        self.min_driver_speed = 0.01
+        self.max_driver_speed = 0.08
         self.max_driver_rotation = 0.1
 
     def reset(self) -> None:
@@ -142,25 +143,21 @@ class Driver:
                 return True, 0.0, 0.0
 
             # Else recursively call this function
+            print(f"\n  Driver - reached target {self.target}, at: {self.path[self.target]}, sensors: ({x_pos}, {y_pos}).")
             self.target += 1
             self.lap = self.target // (len(self.path) // self.number_laps)
-            print(f"  Driver next target: {self.target}, at: {self.path[self.target]}, lap: {self.lap}.")
+            print(f"  Driver - next target: {self.target}, at: {self.path[self.target]}, lap: {self.lap}.")
             return self.follow_path(
                 x_pos=x_pos,
                 y_pos=y_pos,
                 quaternion=quaternion,
             )
         
-        # Compute the new vx command
-        if -np.pi / 4 > angle_heading or angle_heading > np.pi / 4:
-            # If need reorientation, no vx
-            v_lin = 0.0
-        else:
-            # Else vx proportional to distance
-            v_lin = np.clip(0.5 * distance, self.min_driver_speed, self.max_driver_speed)
+        # vx proportional to distance
+        v_lin = np.clip(0.05 * distance, self.min_driver_speed, self.max_driver_speed)
 
         # Compute the new wz command
-        wz = np.clip(1.7 * angle_heading, -self.max_driver_rotation, self.max_driver_rotation)
+        wz = np.clip(2.0 * angle_heading, -self.max_driver_rotation, self.max_driver_rotation)
 
         return False, v_lin, -wz
 
@@ -546,7 +543,7 @@ class EnvironmentManager:
         self.dt = self.env.sys.config.dt
         #self.repetitions = max(round((1 / sensor_freq) / self.dt), 1)
         #print(f"\n    Returning a sensor every {1 / sensor_freq} and using simulation dt of {self.dt}.")
-        self.repetitions = int(5)
+        self.repetitions = int(5) # Chosen from RTE to five enough time to the sinusoidal controllers
         print(f"    Repeating the environment {self.repetitions} times between sensor readings.")
 
         # Get the grid resolution
@@ -868,10 +865,23 @@ class MetricManager:
             self.common_file_name += "_no_perturb"
         self.common_file_name + f"_{circuit}"
 
+        # Naming for dataframe, following convention from get_datas
+        self.rep_name = ""
+        if self.perturbation_off:
+            self.rep_name += "NO_perturbation_"
+        elif circuit == "chicane_static":
+            self.rep_name += "Static_0.7_"
+        elif circuit == "chicane_dynamic":
+            self.rep_name += "Dynamic_Value_0.4_0.7_"
+        if adaptation_off:
+            self.rep_name += "Adaptation_OFF"
+        else:
+            self.rep_name += "Adaptation_ON"
+
         # Create a csv to save common dataframe
         self.empty_metrics()
-        main_metrics = self.create_main_metrics(0, 0, 0, "", 0, "", 0, 0, 0, 0, 0, 0, 0, 0, 0)
-        self.main_file_name = f"{self.folder}/main_{self.common_file_name}.csv"
+        main_metrics = self.create_main_metrics(0, 0, 0, "", 0, "", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+        self.main_file_name = f"{self.folder}/hexapod_main_{self.common_file_name}.csv"
         self._create_metrics(
             file_name=self.main_file_name,
             metrics=main_metrics,
@@ -897,6 +907,7 @@ class MetricManager:
         lap: int,
         #lap_start_time: int,
         #lap_end_time: int,
+        target_id: int,
         target_tx: float,
         target_ty: float,
         tx: float,
@@ -911,15 +922,17 @@ class MetricManager:
         main_metrics = {
             "Time": [timing],
             "Timesteps": [timestep],
-            "Reps": [rep],
+            "Reps": [self.rep_name],
             "Damage_Type": [damage_type],
             "Scaling_Value": [scaling_value],
             "Sections": [section],
+            "Sections_index": [rep],
             #"Sections_start_time": [section_start_time],
             #"Sections_end_time": [section_end_time],
             "Laps": [lap],
             #"Laps_start_time": [lap_start_time],
             #"Laps_end_time": [lap_end_time],
+            "target_id": [target_id],
             "target_tx": [target_tx],
             "target_ty": [target_ty],
             "tx": [tx],
@@ -941,6 +954,7 @@ class MetricManager:
         scaling_value: float,
         section: str,
         lap: int,
+        target_id: int,
         target_tx: float,
         target_ty: float,
         tx: float,
@@ -959,6 +973,7 @@ class MetricManager:
             scaling_value=scaling_value,
             section=section,
             lap=lap,
+            target_id=target_id,
             target_tx=target_tx,
             target_ty=target_ty,
             tx=tx,
@@ -1067,8 +1082,8 @@ class MetricManager:
         self.empty_metrics()
 
         # Main metrics
-        main_metrics = self.create_main_metrics(0, 0, 0, "", 0, "", 0, 0, 0, 0, 0, 0, 0, 0, 0)
-        self.rep_main_file_name = f"{self.folder}/{self.circuit}_replication_main_{rep}.csv"
+        main_metrics = self.create_main_metrics(0, 0, 0, "", 0, "", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+        self.rep_main_file_name = f"{self.folder}/hexapod_{self.circuit}_replication_main_{rep}.csv"
         self._create_metrics(
             file_name=self.rep_main_file_name,
             metrics=main_metrics,
@@ -1085,7 +1100,7 @@ class MetricManager:
         )
 
         self.rep_gp_damage_introspection_file_name = (
-            f"{self.folder}/{self.circuit}_replication_gp_damage_introspection_{rep}.csv"
+            f"{self.folder}/hexapod_{self.circuit}_replication_gp_damage_introspection_{rep}.csv"
         )
         self._create_metrics(
             file_name=self.rep_gp_damage_introspection_file_name,
@@ -1094,7 +1109,7 @@ class MetricManager:
         )
 
         self.rep_learnt_state_functions_file_name = (
-            f"{self.folder}/{self.circuit}_replication_learnt_state_functions_{rep}.csv"
+            f"{self.folder}/hexapod_{self.circuit}_replication_learnt_state_functions_{rep}.csv"
         )
         self._create_metrics(
             file_name=self.rep_learnt_state_functions_file_name,
@@ -1103,7 +1118,7 @@ class MetricManager:
         )
 
         self.rep_adaptation_file_name = (
-            f"{self.folder}/{self.circuit}_replication_adaptation_{rep}.csv"
+            f"{self.folder}/hexapod_{self.circuit}_replication_adaptation_{rep}.csv"
         )
         self._create_metrics(
             file_name=self.rep_adaptation_file_name,
@@ -1113,7 +1128,7 @@ class MetricManager:
 
         # If saving html, create a folder to save data
         if self.save_html:
-            self.rep_html_file_name = f"{self.folder}/{self.circuit}_replication_html_{rep}.html"
+            self.rep_html_file_name = f"{self.folder}/hexapod_{self.circuit}_replication_html_{rep}.html"
             self.rollout = []
             print(f"  Saving html in {self.rep_html_file_name}.")
     
@@ -1162,6 +1177,7 @@ class MetricManager:
         scaling_value: float,
         section: str,
         lap: int,
+        target_id: int,
         target_tx: float,
         target_ty: float,
         tx: float,
@@ -1181,6 +1197,7 @@ class MetricManager:
                 scaling_value=scaling_value,
                 section=section,
                 lap=lap,
+                target_id=target_id,
                 target_tx=target_tx,
                 target_ty=target_ty,
                 tx=tx,
@@ -1200,6 +1217,7 @@ class MetricManager:
                 scaling_value=scaling_value,
                 section=section,
                 lap=lap,
+                target_id=target_id,
                 target_tx=target_tx,
                 target_ty=target_ty,
                 tx=tx,
@@ -1665,6 +1683,7 @@ if __name__ == "__main__":
             scaling_value=scaling_value,
             section=section,
             lap=driver.lap,
+            target_id=driver.target,
             target_tx=driver.target_tx,
             target_ty=driver.target_ty,
             tx=sensor_tx,
@@ -1682,6 +1701,7 @@ if __name__ == "__main__":
 
             # While not done with the path
             call_since_last_training = 0
+            total_timesteps = 0
             while not driver_done:
 
                 # debug_start_t = time.time()
@@ -1701,6 +1721,8 @@ if __name__ == "__main__":
                     y_pos=sensor_ty,
                     quaternion=quaternion,
                 )
+                #human_cmd_lin_x = 0.0
+                #human_cmd_ang_z = -0.1
 
                 # Third, get the corresponding adaptation
                 (
@@ -1725,10 +1747,6 @@ if __name__ == "__main__":
                     adaptation_cmd_ang_z, 
                     state,
                 )
-                # print(f"    Debug - Human: {human_cmd_lin_x}, {human_cmd_ang_z}.")
-                # print(f"    Debug - Adapt: {adaptation_cmd_lin_x}, {adaptation_cmd_ang_z}.")
-                # print(f"    Debug - Targets: {driver.target_tx}, {driver.target_ty}.")
-                # print(f"    Debug - Sensors: {sensor_tx}, {sensor_ty}.")
 
                 # Fifth, save the adaptation metrics
                 metric_manager.add_adaptation_metrics_rep(
@@ -1809,6 +1827,7 @@ if __name__ == "__main__":
                         scaling_value=scaling_value,
                         section=section,
                         lap=driver.lap,
+                        target_id=driver.target,
                         target_tx=driver.target_tx,
                         target_ty=driver.target_ty,
                         tx=sensor_tx,
@@ -1840,6 +1859,15 @@ if __name__ == "__main__":
                 buffer_initialised = False
 
                 # print(f"    Debug - Data Collection time: {time.time() - debug_start_t}.")
+
+                if total_timesteps % 100 == 0:
+                    print(f"\n    Debug - total_timesteps: {total_timesteps}.")
+                    print(f"    Debug - Human: {human_cmd_lin_x}, {human_cmd_ang_z}.")
+                    print(f"    Debug - Adapt: {adaptation_cmd_lin_x}, {adaptation_cmd_ang_z}.")
+                    print(f"    Debug - Targets: {driver.target_tx}, {driver.target_ty}.")
+                    print(f"    Debug - Sensors: {sensor_tx}, {sensor_ty}.")
+                total_timesteps += 1
+
 
             print(f"Done with rep {rep + 1} / {args.num_reps}, took: {time.time() - start_rep_t}.")
 

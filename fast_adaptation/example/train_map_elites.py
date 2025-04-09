@@ -49,7 +49,7 @@ parser.add_argument("--seed", default=0, type=int, help="Sampled if 0.")
 parser.add_argument("--name", default="MAP-Elites", type=str)
 
 # Stopping criterion (required)
-parser.add_argument("--num-generations", default=50000, type=int)
+parser.add_argument("--num-generations", default=5000, type=int)
 
 # Compare size (required)
 parser.add_argument("--batch-size", default=2048, type=int)
