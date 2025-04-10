@@ -2,6 +2,7 @@ from typing import Any, List, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
+import brax.v1 as brax
 from brax.envs.base import Env, State, Wrapper
 
 from qdax.environments.base_wrappers import QDEnv
@@ -79,10 +80,33 @@ class XYawVelocityWrapper(QDEnv):
     def name(self) -> str:
         return self._env_name
 
+    def get_state_descriptor(self, state: State) -> jnp.ndarray:
+
+        # Get the linear velocity (in world frame)
+        linear_velocity_world = state.qp.vel[self._cog_idx]
+
+        # Get the angular velocity (in world frame)
+        angular_velocity_world = state.qp.ang[self._cog_idx]
+
+        # Get the rotation (quaternion) of the robot's body in the world frame
+        rot_world_to_body = state.qp.rot[self._cog_idx]
+
+        # Inverse of the rotation quaternion (to convert from world to body frame)
+        rot_world_to_body_inv = brax.math.quat_inv(rot_world_to_body)
+
+        # Transform the linear velocity from the world frame to the body frame
+        linear_velocity_body = brax.math.rotate(linear_velocity_world, rot_world_to_body_inv)
+
+        # Transform the angular velocity from the world frame to the body frame
+        angular_velocity_body = brax.math.rotate(angular_velocity_world, rot_world_to_body_inv)
+
+        return jnp.concatenate([linear_velocity_body[0:1], angular_velocity_body[2:3]], axis=0)
+
+
     def reset(self, rng: jnp.ndarray) -> State:
         state = self.env.reset(rng)
         state.info["state_descriptor"] = jnp.clip(
-            jnp.concatenate([state.qp.vel[self._cog_idx][0:1], state.qp.ang[self._cog_idx][2:3]], axis=0),
+            self.get_state_descriptor(state),
             a_min=self._minval,
             a_max=self._maxval,
         )
@@ -91,7 +115,7 @@ class XYawVelocityWrapper(QDEnv):
     def step(self, state: State, action: jnp.ndarray) -> State:
         state = self.env.step(state, action)
         state.info["state_descriptor"] = jnp.clip(
-            jnp.concatenate([state.qp.vel[self._cog_idx][0:1], state.qp.ang[self._cog_idx][2:3]], axis=0),
+            self.get_state_descriptor(state),
             a_min=self._minval,
             a_max=self._maxval,
         )
