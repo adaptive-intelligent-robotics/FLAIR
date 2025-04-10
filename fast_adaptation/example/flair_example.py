@@ -15,6 +15,7 @@ import jax.numpy as jnp
 from brax.v1.io import html
 from brax.math import quat_to_euler
 from scipy.spatial.transform import Rotation as R
+import matplotlib.pyplot as plt
 
 from qdax.core.containers.mapelites_repertoire import (
     MapElitesRepertoire,
@@ -95,10 +96,10 @@ class Driver:
     def __init__(self, path: np.array, number_laps: int) -> None:
 
         self.path = path
+        self.number_laps = number_laps
         self.target = 0
         self.target_tx, self.target_ty = self.path[self.target]
         self.lap = 0
-        self.number_laps = number_laps
 
         # Parameters
         self.error_threshold = 0.5
@@ -108,6 +109,8 @@ class Driver:
 
     def reset(self) -> None:
         self.target = 0
+        self.target_tx, self.target_ty = self.path[self.target]
+        self.lap = 0
 
     def get_driver_configuration(self) -> Tuple[float, float]:
         return self.min_driver_speed, self.max_driver_speed
@@ -543,7 +546,7 @@ class EnvironmentManager:
         self.dt = self.env.sys.config.dt
         #self.repetitions = max(round((1 / sensor_freq) / self.dt), 1)
         #print(f"\n    Returning a sensor every {1 / sensor_freq} and using simulation dt of {self.dt}.")
-        self.repetitions = int(5) # Chosen from RTE to five enough time to the sinusoidal controllers
+        self.repetitions = 5 # Chosen from RTE to give enough time to the sinusoidal controllers
         print(f"    Repeating the environment {self.repetitions} times between sensor readings.")
 
         # Get the grid resolution
@@ -1155,6 +1158,28 @@ class MetricManager:
             file_name=self.rep_adaptation_file_name,
             metrics=self.adaptation_metrics,
         )
+
+        plt.figure()
+        plt.plot(self.main_metrics["tx"], self.main_metrics["ty"], marker='o', label="Sensors")
+        plt.plot(self.main_metrics["target_tx"], self.main_metrics["target_ty"], marker='x', label="Targets")
+        plt.grid(True)
+        plt.legend()
+        plt.savefig(f"{self.folder}/hexapod_{self.circuit}_replication_trajectory_{rep}.png")
+
+        plt.figure()
+        plt.plot(self.main_metrics["vx"], marker='o', label="Sensors Vx")
+        plt.plot(self.main_metrics["human_cmd_lin_x"], marker='x', label="Command Vx")
+        plt.grid(True)
+        plt.legend()
+        plt.savefig(f"{self.folder}/hexapod_{self.circuit}_replication_vx_{rep}.png")
+
+        plt.figure()
+        plt.plot(self.main_metrics["wz"], marker='o', label="Sensors Wz")
+        plt.plot(self.main_metrics["human_cmd_ang_z"], marker='x', label="Command Wz")
+        plt.grid(True)
+        plt.legend()
+        plt.savefig(f"{self.folder}/hexapod_{self.circuit}_replication_wz_{rep}.png")
+
 
         # Save html
         if self.save_html:

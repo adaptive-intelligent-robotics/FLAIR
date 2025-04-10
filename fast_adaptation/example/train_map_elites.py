@@ -49,14 +49,14 @@ parser.add_argument("--seed", default=0, type=int, help="Sampled if 0.")
 parser.add_argument("--name", default="MAP-Elites", type=str)
 
 # Stopping criterion (required)
-parser.add_argument("--num-generations", default=5000, type=int)
+parser.add_argument("--num-generations", default=1000, type=int)
 
 # Compare size (required)
 parser.add_argument("--batch-size", default=2048, type=int)
 
 # Environment
 parser.add_argument("--env-name", default="hexapod_velocity", type=str)
-parser.add_argument("--episode-length", default=250, type=int)
+parser.add_argument("--episode-length", default=100, type=int)
 
 # Metrics log-period
 parser.add_argument("--log-period", default=50, type=int)
