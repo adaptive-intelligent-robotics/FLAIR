@@ -676,6 +676,12 @@ class EnvironmentManager:
     def reset(self) -> Any:
         self.random_key, subkey = jax.random.split(self.random_key)
         self.env_state = self.reset_fn(subkey)
+        self.sensor_vx = jnp.zeros((self.repetitions,))
+        self.sensor_vy = jnp.zeros((self.repetitions,))
+        self.sensor_vz = jnp.zeros((self.repetitions,))
+        self.sensor_wx = jnp.zeros((self.repetitions,))
+        self.sensor_wy = jnp.zeros((self.repetitions,))
+        self.sensor_wz = jnp.zeros((self.repetitions,))
         return self.env_state
 
     @partial(jax.jit, static_argnames=("self",))

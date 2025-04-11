@@ -105,20 +105,12 @@ class XYawVelocityWrapper(QDEnv):
 
     def reset(self, rng: jnp.ndarray) -> State:
         state = self.env.reset(rng)
-        state.info["state_descriptor"] = jnp.clip(
-            self.get_state_descriptor(state),
-            a_min=self._minval,
-            a_max=self._maxval,
-        )
+        state.info["state_descriptor"] = self.get_state_descriptor(state)
         return state
 
     def step(self, state: State, action: jnp.ndarray) -> State:
         state = self.env.step(state, action)
-        state.info["state_descriptor"] = jnp.clip(
-            self.get_state_descriptor(state),
-            a_min=self._minval,
-            a_max=self._maxval,
-        )
+        state.info["state_descriptor"] = self.get_state_descriptor(state)
         return state
 
     @property
