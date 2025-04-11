@@ -103,7 +103,7 @@ class Driver:
 
         # Parameters
         self.error_threshold = 0.5
-        self.min_driver_speed = 0.01
+        self.min_driver_speed = 0.0
         self.max_driver_speed = 0.08
         self.max_driver_rotation = 0.1
 
@@ -134,8 +134,11 @@ class Driver:
         error_x = (x - x_pos) 
         error_y = (y - y_pos) 
         error_robot_frame = r.apply(np.asarray([error_x, error_y, 0]), inverse=True)
+
+        print("error_robot_frame", error_robot_frame)
         angle_heading = np.arctan2(error_robot_frame[1], error_robot_frame[0])
         distance = np.linalg.norm(error_robot_frame)
+
 
         # If already at target, go to next target
         if distance < self.error_threshold:
@@ -158,9 +161,24 @@ class Driver:
         
         # vx proportional to distance
         v_lin = np.clip(0.05 * distance, self.min_driver_speed, self.max_driver_speed)
-
+        
         # Compute the new wz command
-        wz = np.clip(2.0 * angle_heading, -self.max_driver_rotation, self.max_driver_rotation)
+        wz = np.clip(1.0 * angle_heading, -self.max_driver_rotation, self.max_driver_rotation)
+
+        # if abs(angle_heading) > np.pi / 2:
+        #     # Choose to drive backward
+        #     angle_heading = angle_heading - np.pi if angle_heading > 0 else angle_heading + np.pi
+        #     angle_heading = (angle_heading + np.pi) % (2 * np.pi) - np.pi
+ 
+        #     v_lin = -np.clip(0.1 * distance, self.min_driver_speed, self.max_driver_speed)
+        #     wz = np.clip(2.0 * angle_heading, -self.max_driver_rotation, self.max_driver_rotation)
+        # else:
+        #     # Drive forward
+        #     v_lin = np.clip(0.1 * distance, self.min_driver_speed, self.max_driver_speed)
+        #     wz = np.clip(2.0 * angle_heading, -self.max_driver_rotation, self.max_driver_rotation)
+
+        # print(f"Commanded Velocities: {v_lin:.2f} m/s, {wz:.2f} rad/s")
+
 
         return False, v_lin, -wz
 
@@ -689,6 +707,7 @@ class EnvironmentManager:
             sensor_roll,
             sensor_pitch,
         )
+        
 
         return (
             state,
@@ -1465,7 +1484,7 @@ if __name__ == "__main__":
     parser.add_argument("--adaptation-off", action="store_true")
 
     # Frequency set to the same ratio as the real robot
-    parser.add_argument("--sensor-freq", default=70, type=float)
+    parser.add_argument("--sensor-freq", default=50, type=float)
     parser.add_argument("--command-freq", default=10, type=float)
 
     # As not asynchroneous, set reasonable model training frequency
@@ -1822,7 +1841,10 @@ if __name__ == "__main__":
                         sensor_wy,
                         sensor_wz,
                     ) = env_manager.get_sensor()
-
+                    if sensor_vx > 130 or sensor_vx < -130 or sensor_wz > 130 or sensor_wz < -130:
+                        print("!!!ERROR!!! Robot exploded, exiting.")
+                        driver_done = True
+                        break
                     # Add to the buffers for FLAIR
                     sensor_time = ROSTimestamp(timestep, args.sensor_freq)
                     if not buffer_initialised:
