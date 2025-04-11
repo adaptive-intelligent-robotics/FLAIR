@@ -103,7 +103,7 @@ class Driver:
 
         # Parameters
         self.error_threshold = 0.5
-        self.min_driver_speed = 0.01
+        self.min_driver_speed = 0.001
         self.max_driver_speed = 0.08
         self.max_driver_rotation = 0.1
 
@@ -137,6 +137,7 @@ class Driver:
 
         #print("error_robot_frame", error_robot_frame)
         angle_heading = np.arctan2(error_robot_frame[1], error_robot_frame[0])
+        
         distance = np.linalg.norm(error_robot_frame)
 
 
@@ -159,24 +160,38 @@ class Driver:
                 quaternion=quaternion,
             )
         
+        adjusted_angle = angle_heading - np.pi if angle_heading > 0 else angle_heading + np.pi
+        print("Adjusted Angle Heading", adjusted_angle)
+
+        # if angle_heading<0:
+        #     angle_heading = angle_heading + 2 * np.pi
+
+        print("Angle Heading", angle_heading)
         # vx proportional to distance
         v_lin = np.clip(0.05 * distance, self.min_driver_speed, self.max_driver_speed)
         
         # Compute the new wz command
-        wz = np.clip(1.0 * angle_heading, -self.max_driver_rotation, self.max_driver_rotation)
+        wz = np.clip(0.6 * angle_heading, -self.max_driver_rotation, self.max_driver_rotation)
 
-        if abs(angle_heading) > np.deg2rad(140):
-            # Choose to drive backward
-            # angle_heading = angle_heading - np.pi if angle_heading > 0 else angle_heading + np.pi
-            # angle_heading = (angle_heading + np.pi) % (2 * np.pi) - np.pi
+        if abs(angle_heading)<0.1:
+            wz = 0.0
 
-            adjusted_angle = angle_heading - np.pi if angle_heading > 0 else angle_heading + np.pi
-            v_lin = -np.clip(0.1 * distance, self.min_driver_speed, self.max_driver_speed)
-            wz = np.clip(1.0 * adjusted_angle, -self.max_driver_rotation, self.max_driver_rotation)
-        else:
-            # Drive forward
-            v_lin = np.clip(0.1 * distance, self.min_driver_speed, self.max_driver_speed)
-            wz = np.clip(1.0 * angle_heading, -self.max_driver_rotation, self.max_driver_rotation)
+        # if abs(angle_heading)>1.0:
+        #     v_lin = 0.02
+        
+
+        # if abs(angle_heading) > np.deg2rad(140):
+        #     # Choose to drive backward
+        #     # angle_heading = angle_heading - np.pi if angle_heading > 0 else angle_heading + np.pi
+        #     # angle_heading = (angle_heading + np.pi) % (2 * np.pi) - np.pi
+
+        #     adjusted_angle = angle_heading - np.pi if angle_heading > 0 else angle_heading + np.pi
+        #     v_lin = -np.clip(0.1 * distance, self.min_driver_speed, self.max_driver_speed)
+        #     wz = np.clip(1.0 * adjusted_angle, -self.max_driver_rotation, self.max_driver_rotation)
+        # else:
+        #     # Drive forward
+        #     v_lin = np.clip(0.1 * distance, self.min_driver_speed, self.max_driver_speed)
+        #     wz = np.clip(0.6 * angle_heading, -self.max_driver_rotation, self.max_driver_rotation)
 
         print(f"Commanded Velocities: {v_lin:.2f} m/s, {wz:.2f} rad/s")
 
