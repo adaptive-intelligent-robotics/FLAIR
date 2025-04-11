@@ -103,7 +103,7 @@ class Driver:
 
         # Parameters
         self.error_threshold = 0.5
-        self.min_driver_speed = 0.0
+        self.min_driver_speed = 0.01
         self.max_driver_speed = 0.08
         self.max_driver_rotation = 0.1
 
@@ -165,19 +165,20 @@ class Driver:
         # Compute the new wz command
         wz = np.clip(1.0 * angle_heading, -self.max_driver_rotation, self.max_driver_rotation)
 
-        # if abs(angle_heading) > np.pi / 2:
-        #     # Choose to drive backward
-        #     angle_heading = angle_heading - np.pi if angle_heading > 0 else angle_heading + np.pi
-        #     angle_heading = (angle_heading + np.pi) % (2 * np.pi) - np.pi
- 
-        #     v_lin = -np.clip(0.1 * distance, self.min_driver_speed, self.max_driver_speed)
-        #     wz = np.clip(2.0 * angle_heading, -self.max_driver_rotation, self.max_driver_rotation)
-        # else:
-        #     # Drive forward
-        #     v_lin = np.clip(0.1 * distance, self.min_driver_speed, self.max_driver_speed)
-        #     wz = np.clip(2.0 * angle_heading, -self.max_driver_rotation, self.max_driver_rotation)
+        if abs(angle_heading) > np.deg2rad(140):
+            # Choose to drive backward
+            # angle_heading = angle_heading - np.pi if angle_heading > 0 else angle_heading + np.pi
+            # angle_heading = (angle_heading + np.pi) % (2 * np.pi) - np.pi
 
-        # print(f"Commanded Velocities: {v_lin:.2f} m/s, {wz:.2f} rad/s")
+            adjusted_angle = angle_heading - np.pi if angle_heading > 0 else angle_heading + np.pi
+            v_lin = -np.clip(0.1 * distance, self.min_driver_speed, self.max_driver_speed)
+            wz = np.clip(1.0 * adjusted_angle, -self.max_driver_rotation, self.max_driver_rotation)
+        else:
+            # Drive forward
+            v_lin = np.clip(0.1 * distance, self.min_driver_speed, self.max_driver_speed)
+            wz = np.clip(1.0 * angle_heading, -self.max_driver_rotation, self.max_driver_rotation)
+
+        print(f"Commanded Velocities: {v_lin:.2f} m/s, {wz:.2f} rad/s")
 
 
         return False, v_lin, -wz
