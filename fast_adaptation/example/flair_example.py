@@ -12,8 +12,8 @@ from typing import Tuple, Dict, Any
 
 import jax
 import jax.numpy as jnp
+import brax.v1 as brax
 from brax.v1.io import html
-from brax.math import quat_to_euler
 from scipy.spatial.transform import Rotation as R
 import matplotlib.pyplot as plt
 
@@ -135,7 +135,7 @@ class Driver:
         error_y = (y - y_pos) 
         error_robot_frame = r.apply(np.asarray([error_x, error_y, 0]), inverse=True)
 
-        print("error_robot_frame", error_robot_frame)
+        #print("error_robot_frame", error_robot_frame)
         angle_heading = np.arctan2(error_robot_frame[1], error_robot_frame[0])
         distance = np.linalg.norm(error_robot_frame)
 
@@ -643,6 +643,16 @@ class EnvironmentManager:
         #    play_step_fn=play_step_fn,
         #))
 
+        # Empty container to average speed reading across the replications
+        self.sensor_vx = jnp.zeros((self.repetitions,))
+        self.sensor_vy = jnp.zeros((self.repetitions,))
+        self.sensor_vz = jnp.zeros((self.repetitions,))
+        self.sensor_wx = jnp.zeros((self.repetitions,))
+        self.sensor_wy = jnp.zeros((self.repetitions,))
+        self.sensor_wz = jnp.zeros((self.repetitions,))
+
+        # Pre-jit the function to speed-up
+        self.sensor_update_fn = jax.jit(self.update_sensor)
 
     def get_grid_details(self) -> Tuple[np.ndarray, float, float]:
         return self.grid_resolution, self.min_command, self.max_command
@@ -651,6 +661,46 @@ class EnvironmentManager:
         self.random_key, subkey = jax.random.split(self.random_key)
         self.env_state = self.reset_fn(subkey)
         return self.env_state
+
+    @partial(jax.jit, static_argnames=("self",))
+    def update_sensor(
+        self, 
+        repetition: jnp.ndarray,
+        env_state: Any, 
+        sensor_vx: jnp.ndarray,
+        sensor_vy: jnp.ndarray,
+        sensor_vz: jnp.ndarray,
+        sensor_wx: jnp.ndarray,
+        sensor_wy: jnp.ndarray,
+        sensor_wz: jnp.ndarray,
+    ) -> Tuple:
+
+        # Get the linear velocity (in world frame)
+        linear_velocity_world = env_state.qp.vel[0]
+
+        # Get the angular velocity (in world frame)
+        angular_velocity_world = env_state.qp.ang[0]
+
+        # Get the rotation (quaternion) of the robot's body in the world frame
+        rot_world_to_body = env_state.qp.rot[0]
+
+        # Inverse of the rotation quaternion (to convert from world to body frame)
+        rot_world_to_body_inv = brax.math.quat_inv(rot_world_to_body)
+
+        # Transform the linear velocity from the world frame to the body frame
+        linear_velocity_body = brax.math.rotate(linear_velocity_world, rot_world_to_body_inv)
+
+        # Transform the angular velocity from the world frame to the body frame
+        angular_velocity_body = brax.math.rotate(angular_velocity_world, rot_world_to_body_inv)
+
+        sensor_vx = sensor_vx.at[repetition].set(linear_velocity_body.at[0].get())
+        sensor_vy = sensor_vy.at[repetition].set(linear_velocity_body.at[1].get())
+        sensor_vz = sensor_vz.at[repetition].set(linear_velocity_body.at[2].get())
+        sensor_wx = sensor_wx.at[repetition].set(angular_velocity_body.at[0].get())
+        sensor_wy = sensor_wy.at[repetition].set(angular_velocity_body.at[1].get())
+        sensor_wz = sensor_wz.at[repetition].set(angular_velocity_body.at[2].get())
+
+        return sensor_vx, sensor_vy, sensor_vz, sensor_wx, sensor_wy, sensor_wz
 
     def step(self, cmd_lin_x: float, cmd_ang_z: float) -> Any:
 
@@ -667,8 +717,8 @@ class EnvironmentManager:
             self.cmd_lin_x = cmd_lin_x
             self.cmd_ang_z = cmd_ang_z
             self.timestep = 0
-
-        for _ in range (self.repetitions):
+        
+        for repetition in range (self.repetitions):
 
             # Get the action
             action = self.inference_fn(self.params, self.env_state, self.timestep)
@@ -677,6 +727,24 @@ class EnvironmentManager:
             # Apply it in the environment
             self.env_state = self.step_fn(self.env_state, action)
 
+            # Add sensor
+            (
+                self.sensor_vx,
+                self.sensor_vy,
+                self.sensor_vz,
+                self.sensor_wx,
+                self.sensor_wy,
+                self.sensor_wz,
+            ) = self.sensor_update_fn(
+                repetition=repetition,
+                env_state=env_state,
+                sensor_vx=self.sensor_vx,
+                sensor_vy=self.sensor_vy,
+                sensor_vz=self.sensor_vz,
+                sensor_wx=self.sensor_wx,
+                sensor_wy=self.sensor_wy,
+                sensor_wz=self.sensor_wz,
+            )
         return self.env_state
 
     def get_sensor(self) -> Tuple:
@@ -686,15 +754,17 @@ class EnvironmentManager:
         # Position of the torso
         sensor_tx, sensor_ty, sensor_tz = qp.pos[0]
 
-        # Velocity of the torso
-        sensor_vx, sensor_vy, sensor_vz = qp.vel[0]
-
         # Angle of the torso
         quaternion = qp.rot[0]
-        sensor_yaw, sensor_roll, sensor_pitch = quat_to_euler(quaternion)
+        sensor_yaw, sensor_roll, sensor_pitch = brax.math.quat_to_euler(quaternion)
 
-        # Angular velocity of the torso
-        sensor_wx, sensor_wy, sensor_wz = qp.ang[0]
+        # Velocity and angular velocity of the torso avg over latest self.repetitions
+        sensor_vx = jnp.average(self.sensor_vx)
+        sensor_vy = jnp.average(self.sensor_vy)
+        sensor_vz = jnp.average(self.sensor_vz)
+        sensor_wx = jnp.average(self.sensor_wx)
+        sensor_wy = jnp.average(self.sensor_wy)
+        sensor_wz = jnp.average(self.sensor_wz)
 
         # Build the state similarly to main robot pipeline
         state = (
@@ -1710,6 +1780,7 @@ if __name__ == "__main__":
             sensor_wy,
             sensor_wz,
         ) = env_manager.get_sensor()
+        # print("  Initial sensor readings:", sensor_vx, sensor_wz)
 
         # Prepare the metrics for this rep
         metric_manager.create_metrics_rep(rep=rep)
@@ -1841,10 +1912,12 @@ if __name__ == "__main__":
                         sensor_wy,
                         sensor_wz,
                     ) = env_manager.get_sensor()
+
                     if sensor_vx > 130 or sensor_vx < -130 or sensor_wz > 130 or sensor_wz < -130:
                         print("!!!ERROR!!! Robot exploded, exiting.")
                         driver_done = True
                         break
+
                     # Add to the buffers for FLAIR
                     sensor_time = ROSTimestamp(timestep, args.sensor_freq)
                     if not buffer_initialised:
