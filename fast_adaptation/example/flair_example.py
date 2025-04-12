@@ -1996,10 +1996,10 @@ if __name__ == "__main__":
                         driver_done = True
                         break
 
-                    # if total_timesteps > 200:
-                    #     print("too long")
-                    #     driver_done = True
-                    #     break
+                    if total_timesteps > 100:
+                        print("too long")
+                        driver_done = True
+                        break
 
                     # Add to the buffers for FLAIR
                     sensor_time = ROSTimestamp(timestep, args.sensor_freq)

@@ -234,7 +234,8 @@ def set_up_hexapod(
             -bottom_actions * (jnp.pi / 4) * (180 / jnp.pi)
         )
         if damage:
-            actions = actions.at[jnp.asarray([3, 4, 5])].set(jnp.pi)
+            actions = actions.at[jnp.asarray([3])].set(0)
+            actions = actions.at[jnp.asarray([4, 5])].set(jnp.asarray([-90, 90]))
         return actions
 
     inference_fn = jax.jit(inference)
