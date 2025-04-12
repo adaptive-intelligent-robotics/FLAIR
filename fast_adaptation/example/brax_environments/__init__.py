@@ -68,6 +68,7 @@ def create(
     eval_metrics: bool = False,
     fixed_init_state: bool = False,
     qdax_wrappers_kwargs: Optional[List] = None,
+    damage:bool = False
     **kwargs: Any,
 ) -> Union[Env, QDEnv]:
     """Creates an Env with a specified brax system.
@@ -86,7 +87,7 @@ def create(
             env = _envs[base_env_name](legacy_spring=False, use_contact_forces=False, **kwargs)
         elif base_env_name == "hexapod_no_reward":
             print("    Using local hexapod")
-            env = Hexapod(**kwargs)
+            env = Hexapod(**kwargs,damage=damage)
         elif base_env_name == "hexapod_angle_diff":
             print("    Using local hexapod")
             env = HexapodAngleDiff(**kwargs)

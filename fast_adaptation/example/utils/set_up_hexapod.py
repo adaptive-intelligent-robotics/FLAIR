@@ -203,6 +203,7 @@ def set_up_hexapod(
     env = brax_environments.create(
         env_name,
         episode_length=episode_length,
+        damage = damage
     )
 
     # Define the fonction to infer the next action
@@ -233,9 +234,9 @@ def set_up_hexapod(
         actions = actions.at[jnp.asarray([2, 5, 8, 11, 14, 17])].set(
             -bottom_actions * (jnp.pi / 4) * (180 / jnp.pi)
         )
-        if damage:
-            actions = actions.at[jnp.asarray([3])].set(0)
-            actions = actions.at[jnp.asarray([4, 5])].set(jnp.asarray([-90, 90]))
+        # if damage:
+        #     actions = actions.at[jnp.asarray([3])].set(0)
+        #     actions = actions.at[jnp.asarray([4, 5])].set(jnp.asarray([-90, 90]))
         return actions
 
     inference_fn = jax.jit(inference)

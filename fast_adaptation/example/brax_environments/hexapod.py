@@ -14,9 +14,12 @@ class Hexapod(env.Env):
     def __init__(
         self,
         legacy_spring: bool = False,
+        damage: bool = False,
         **kwargs: Any,
     ) -> None:
-        config = _SYSTEM_CONFIG
+        config = _SYSTEM_CONFIG if not damage else _SYSTEM_CONFIG_DMG
+        if damage:
+            print("!! USING DAMAGED CONFIG !!")
         # config = _SYSTEM_CONFIG_SPRING if legacy_spring else _SYSTEM_CONFIG
         super().__init__(config=config, **kwargs)
 
@@ -2059,14 +2062,14 @@ actuators {
 actuators {
   name: "leg_1_1_2"
   joint: "leg_1_1_2"
-  strength: 60.0
+  strength: 10.0
   angle {
   }
 }
 actuators {
   name: "leg_1_2_3"
   joint: "leg_1_2_3"
-  strength: 60.0
+  strength: 10.0
   angle {
   }
 }
