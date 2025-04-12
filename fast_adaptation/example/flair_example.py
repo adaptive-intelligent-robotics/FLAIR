@@ -182,19 +182,17 @@ class Driver:
         x, y = self.path[self.target]
         self.target_tx, self.target_ty = x, y
 
-        # Transform quaternion
-        # angles = brax.math.quat_to_euler(quaternion)
-        r = R.from_quat(quaternion)
+        sensor_yaw, sensor_roll, sensor_pitch = brax.math.quat_to_euler(quaternion)
+        print("Angle", angle,sensor_pitch)
 
         # Compute the error
         error_x = (x - x_pos) 
         error_y = (y - y_pos) 
-        error_robot_frame = r.apply(np.asarray([error_x, error_y, 0]), inverse=True)
+        error_frame = brax.math.inv_rotate(np.asarray([error_x, error_y, 0]),quaternion)
 
-        #print("error_robot_frame", error_robot_frame)
-        angle_heading = np.arctan2(error_robot_frame[1], error_robot_frame[0])
+        angle_heading = np.arctan2(error_frame[1], error_frame[0])
         
-        distance = np.linalg.norm(error_robot_frame)
+        distance = np.linalg.norm(error_frame)
 
 
         # If already at target, go to next target
@@ -246,11 +244,11 @@ class Driver:
         if abs(angle_heading)>np.deg2rad(45):
             v_lin = 0.005
         print("Angle Heading", angle_heading)
-
+        
         print(f"Commanded Velocities: {v_lin:.3f} m/s, {wz:.3f} rad/s")
 
 
-        return False, v_lin, -wz
+        return False, v_lin, wz
 
 
 #########
