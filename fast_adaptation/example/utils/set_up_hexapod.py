@@ -209,7 +209,7 @@ def set_up_hexapod(
         amplitude: jnp.ndarray, phase: jnp.ndarray, t: int
     ) -> jnp.ndarray:
         return amplitude * jnp.sin(
-            (2 * t * jnp.pi / 25) + phase * jnp.pi
+            (2 * t * jnp.pi / 50) + phase * jnp.pi
         )  # in degrees for brax
 
     def inference(params: Genotype, state: EnvState, timestep: int) -> jnp.ndarray:

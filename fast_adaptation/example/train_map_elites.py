@@ -52,11 +52,11 @@ parser.add_argument("--name", default="MAP-Elites", type=str)
 parser.add_argument("--num-generations", default=1000, type=int)
 
 # Compare size (required)
-parser.add_argument("--batch-size", default=2048, type=int)
+parser.add_argument("--batch-size", default=2048*2, type=int)
 
 # Environment
 parser.add_argument("--env-name", default="hexapod_velocity", type=str)
-parser.add_argument("--episode-length", default=100, type=int)
+parser.add_argument("--episode-length", default=150, type=int)
 
 # Metrics log-period
 parser.add_argument("--log-period", default=50, type=int)
@@ -137,8 +137,8 @@ variation_fn = partial(
     isoline_variation,
     iso_sigma=args.iso_sigma,
     line_sigma=args.line_sigma,
-    minval=None,
-    maxval=None,
+    minval=-1.0,
+    maxval=1.0,
 )
 emitter = MixingEmitter(
     mutation_fn=None,

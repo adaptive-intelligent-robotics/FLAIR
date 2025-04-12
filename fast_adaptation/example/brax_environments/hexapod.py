@@ -712,7 +712,7 @@ joints {
   }
   rotation { y: -90
   }
-  angular_damping: 15.0
+  angular_damping: 30.0
   angle_limit {
     min: -22.5
     max: 22.5
@@ -728,7 +728,7 @@ joints {
   }
   rotation { z: 45.0
   }
-  angular_damping: 15.0
+  angular_damping: 30.0
   angle_limit {
     min: -45.0
     max: 45.0
@@ -744,7 +744,7 @@ joints {
   }
   rotation { z: 45
   }
-  angular_damping: 15.0
+  angular_damping: 30.0
   angle_limit {
     min: -45.0
     max: 45.0
@@ -759,7 +759,7 @@ joints {
   }
   rotation { y: -90
   }
-  angular_damping: 15.0
+  angular_damping: 30.0
   angle_limit {
     min: -22.5
     max: 22.5
@@ -776,7 +776,7 @@ joints {
   }
   rotation {
   }
-  angular_damping: 15.0
+  angular_damping: 30.0
   angle_limit {
     min: -45.0
     max: 45.0
@@ -794,7 +794,7 @@ joints {
   }
   rotation {
   }
-  angular_damping: 15.0
+  angular_damping: 30.0
   angle_limit {
     min: -45.0
     max: 45.0
@@ -810,7 +810,7 @@ joints {
   }
   rotation { y: -90
   }
-  angular_damping: 15.0
+  angular_damping: 30.0
   angle_limit {
     min: -22.5
     max: 22.5
@@ -826,7 +826,7 @@ joints {
   }
   rotation { z: -45
   }
-  angular_damping: 15.0
+  angular_damping: 30.0
   angle_limit {
     min: -45.0
     max: 45.0
@@ -842,7 +842,7 @@ joints {
   }
   rotation {z:-45.0
   }
-  angular_damping: 15.0
+  angular_damping: 30.0
   angle_limit {
     min: -45.0
     max: 45.0
@@ -858,7 +858,7 @@ joints {
   }
   rotation { y: -90
   }
-  angular_damping: 15.0
+  angular_damping: 30.0
   angle_limit {
     min: -22.5
     max: 22.5
@@ -875,7 +875,7 @@ joints {
   }
   rotation { z: 45
   }
-  angular_damping: 15.0
+  angular_damping: 30.0
   angle_limit {
     min: -45.0
     max: 45.0
@@ -893,7 +893,7 @@ joints {
   }
   rotation { z:45
   }
-  angular_damping: 15.0
+  angular_damping: 30.0
   angle_limit {
     min: -45.0
     max: 45.0
@@ -909,7 +909,7 @@ joints {
   }
   rotation { y: -90
   }
-  angular_damping: 15.0
+  angular_damping: 30.0
   angle_limit {
     min: -22.5
     max: 22.5
@@ -926,7 +926,7 @@ joints {
   }
   rotation {
   }
-  angular_damping: 15.0
+  angular_damping: 30.0
   angle_limit {
     min: -45.0
     max: 45.0
@@ -943,7 +943,7 @@ joints {
   }
   rotation {
   }
-  angular_damping: 15.0
+  angular_damping: 30.0
   angle_limit {
     min: -45.0
     max: 45.0
@@ -959,7 +959,7 @@ joints {
   }
   rotation { y: -90
   }
-  angular_damping: 15.0
+  angular_damping: 30.0
   angle_limit {
     min: -22.5
     max: 22.5
@@ -975,7 +975,7 @@ joints {
   }
   rotation { z:-45.0
   }
-  angular_damping: 15.0
+  angular_damping: 30.0
   angle_limit {
     min: -45.0
     max: 45.0
@@ -991,7 +991,7 @@ joints {
   }
   rotation { z:-45
   }
-  angular_damping: 15.0
+  angular_damping: 30.0
   angle_limit {
     min: -45.0
     max: 45.0
@@ -1000,126 +1000,126 @@ joints {
 actuators {
   name: "body_leg_0"
   joint: "body_leg_0"
-  strength: 100.0
+  strength: 60.0
   angle {
   }
 }
 actuators {
   name: "leg_0_1_2"
   joint: "leg_0_1_2"
-  strength: 100.0
+  strength: 60.0
   angle {
   }
 }
 actuators {
   name: "leg_0_2_3"
   joint: "leg_0_2_3"
-  strength: 100.0
+  strength: 60.0
   angle {
   }
 }
 actuators {
   name: "body_leg_1"
   joint: "body_leg_1"
-  strength: 100.0
+  strength: 60.0
   angle {
   }
 }
 actuators {
   name: "leg_1_1_2"
   joint: "leg_1_1_2"
-  strength: 100.0
+  strength: 60.0
   angle {
   }
 }
 actuators {
   name: "leg_1_2_3"
   joint: "leg_1_2_3"
-  strength: 100.0
+  strength: 60.0
   angle {
   }
 }
 actuators {
   name: "body_leg_2"
   joint: "body_leg_2"
-  strength: 100.0
+  strength: 60.0
   angle {
   }
 }
 actuators {
   name: "leg_2_1_2"
   joint: "leg_2_1_2"
-  strength: 100.0
+  strength: 60.0
   angle {
   }
 }
 actuators {
   name: "leg_2_2_3"
   joint: "leg_2_2_3"
-  strength: 100.0
+  strength: 60.0
   angle {
   }
 }
 actuators {
   name: "body_leg_3"
   joint: "body_leg_3"
-  strength: 100.0
+  strength: 60.0
   angle {
   }
 }
 actuators {
   name: "leg_3_1_2"
   joint: "leg_3_1_2"
-  strength: 100.0
+  strength: 60.0
   angle {
   }
 }
 actuators {
   name: "leg_3_2_3"
   joint: "leg_3_2_3"
-  strength: 100.0
+  strength: 60.0
   angle {
   }
 }
 actuators {
   name: "body_leg_4"
   joint: "body_leg_4"
-  strength: 100.0
+  strength: 60.0
   angle {
   }
 }
 actuators {
   name: "leg_4_1_2"
   joint: "leg_4_1_2"
-  strength: 100.0
+  strength: 60.0
   angle {
   }
 }
 actuators {
   name: "leg_4_2_3"
   joint: "leg_4_2_3"
-  strength: 100.0
+  strength: 60.0
   angle {
   }
 }
 actuators {
   name: "body_leg_5"
   joint: "body_leg_5"
-  strength: 100.0
+  strength: 60.0
   angle {
   }
 }
 actuators {
   name: "leg_5_1_2"
   joint: "leg_5_1_2"
-  strength: 100.0
+  strength: 60.0
   angle {
   }
 }
 actuators {
   name: "leg_5_2_3"
   joint: "leg_5_2_3"
-  strength: 100.0
+  strength: 60.0
   angle {
   }
 }
@@ -1744,12 +1744,12 @@ dynamics_mode: "pbd"
 #   }
 #   rotation { y: -90
 #   }
-#   angular_damping: 15.0
+#   angular_damping: 30.0
 #   angle_limit {
 #     min: -22.5
 #     max: 22.5
 #   }
-#   limit_strength: 100.0
+#   limit_strength: 60.0
 #   spring_damping: 10.0
 # }
 # joints {
@@ -1763,12 +1763,12 @@ dynamics_mode: "pbd"
 #   }
 #   rotation { z: 45.0
 #   }
-#   angular_damping: 15.0
+#   angular_damping: 30.0
 #   angle_limit {
 #     min: -45.0
 #     max: 45.0
 #   }
-#   limit_strength: 100.0
+#   limit_strength: 60.0
 #   spring_damping: 10.0
 # }
 # joints {
@@ -1782,12 +1782,12 @@ dynamics_mode: "pbd"
 #   }
 #   rotation { z: 45
 #   }
-#   angular_damping: 15.0
+#   angular_damping: 30.0
 #   angle_limit {
 #     min: -45.0
 #     max: 45.0
 #   }
-#   limit_strength: 100.0
+#   limit_strength: 60.0
 #   spring_damping: 10.0
 # }
 # joints {
@@ -1800,12 +1800,12 @@ dynamics_mode: "pbd"
 #   }
 #   rotation { y: -90
 #   }
-#   angular_damping: 15.0
+#   angular_damping: 30.0
 #   angle_limit {
 #     min: -22.5
 #     max: 22.5
 #   }
-#   limit_strength: 100.0
+#   limit_strength: 60.0
 #   spring_damping: 10.0
 # }
 # joints {
@@ -1819,12 +1819,12 @@ dynamics_mode: "pbd"
 #   }
 #   rotation {
 #   }
-#   angular_damping: 15.0
+#   angular_damping: 30.0
 #   angle_limit {
 #     min: -45.0
 #     max: 45.0
 #   }
-#   limit_strength: 100.0
+#   limit_strength: 60.0
 #   spring_damping: 10.0
 # }
 # joints {
@@ -1838,12 +1838,12 @@ dynamics_mode: "pbd"
 #   }
 #   rotation {
 #   }
-#   angular_damping: 15.0
+#   angular_damping: 30.0
 #   angle_limit {
 #     min: -45.0
 #     max: 45.0
 #   }
-#   limit_strength: 100.0
+#   limit_strength: 60.0
 #   spring_damping: 10.0
 # }
 # joints {
@@ -1857,12 +1857,12 @@ dynamics_mode: "pbd"
 #   }
 #   rotation { y: -90
 #   }
-#   angular_damping: 15.0
+#   angular_damping: 30.0
 #   angle_limit {
 #     min: -22.5
 #     max: 22.5
 #   }
-#   limit_strength: 100.0
+#   limit_strength: 60.0
 #   spring_damping: 10.0
 # }
 # joints {
@@ -1876,12 +1876,12 @@ dynamics_mode: "pbd"
 #   }
 #   rotation { z: -45
 #   }
-#   angular_damping: 15.0
+#   angular_damping: 30.0
 #   angle_limit {
 #     min: -45.0
 #     max: 45.0
 #   }
-#   limit_strength: 100.0
+#   limit_strength: 60.0
 #   spring_damping: 10.0
 # }
 # joints {
@@ -1895,12 +1895,12 @@ dynamics_mode: "pbd"
 #   }
 #   rotation {z:-45.0
 #   }
-#   angular_damping: 15.0
+#   angular_damping: 30.0
 #   angle_limit {
 #     min: -45.0
 #     max: 45.0
 #   }
-#   limit_strength: 100.0
+#   limit_strength: 60.0
 #   spring_damping: 10.0
 # }
 # joints {
@@ -1914,12 +1914,12 @@ dynamics_mode: "pbd"
 #   }
 #   rotation { y: -90
 #   }
-#   angular_damping: 15.0
+#   angular_damping: 30.0
 #   angle_limit {
 #     min: -22.5
 #     max: 22.5
 #   }
-#   limit_strength: 100.0
+#   limit_strength: 60.0
 #   spring_damping: 10.0
 # }
 # joints {
@@ -1933,12 +1933,12 @@ dynamics_mode: "pbd"
 #   }
 #   rotation { z: 45
 #   }
-#   angular_damping: 15.0
+#   angular_damping: 30.0
 #   angle_limit {
 #     min: -45.0
 #     max: 45.0
 #   }
-#   limit_strength: 100.0
+#   limit_strength: 60.0
 #   spring_damping: 10.0
 # }
 # joints {
@@ -1952,12 +1952,12 @@ dynamics_mode: "pbd"
 #   }
 #   rotation { z:45
 #   }
-#   angular_damping: 15.0
+#   angular_damping: 30.0
 #   angle_limit {
 #     min: -45.0
 #     max: 45.0
 #   }
-#   limit_strength: 100.0
+#   limit_strength: 60.0
 #   spring_damping: 10.0
 # }
 # joints {
@@ -1970,12 +1970,12 @@ dynamics_mode: "pbd"
 #   }
 #   rotation { y: -90
 #   }
-#   angular_damping: 15.0
+#   angular_damping: 30.0
 #   angle_limit {
 #     min: -22.5
 #     max: 22.5
 #   }
-#   limit_strength: 100.0
+#   limit_strength: 60.0
 #   spring_damping: 10.0
 # }
 # joints {
@@ -1989,12 +1989,12 @@ dynamics_mode: "pbd"
 #   }
 #   rotation {
 #   }
-#   angular_damping: 15.0
+#   angular_damping: 30.0
 #   angle_limit {
 #     min: -45.0
 #     max: 45.0
 #   }
-#   limit_strength: 100.0
+#   limit_strength: 60.0
 #   spring_damping: 10.0
 # }
 # joints {
@@ -2008,12 +2008,12 @@ dynamics_mode: "pbd"
 #   }
 #   rotation {
 #   }
-#   angular_damping: 15.0
+#   angular_damping: 30.0
 #   angle_limit {
 #     min: -45.0
 #     max: 45.0
 #   }
-#   limit_strength: 100.0
+#   limit_strength: 60.0
 #   spring_damping: 10.0
 # }
 # joints {
@@ -2027,12 +2027,12 @@ dynamics_mode: "pbd"
 #   }
 #   rotation { y: -90
 #   }
-#   angular_damping: 15.0
+#   angular_damping: 30.0
 #   angle_limit {
 #     min: -22.5
 #     max: 22.5
 #   }
-#   limit_strength: 100.0
+#   limit_strength: 60.0
 #   spring_damping: 10.0
 # }
 # joints {
@@ -2046,12 +2046,12 @@ dynamics_mode: "pbd"
 #   }
 #   rotation { z:-45.0
 #   }
-#   angular_damping: 15.0
+#   angular_damping: 30.0
 #   angle_limit {
 #     min: -45.0
 #     max: 45.0
 #   }
-#   limit_strength: 100.0
+#   limit_strength: 60.0
 #   spring_damping: 10.0
 # }
 # joints {
@@ -2065,137 +2065,137 @@ dynamics_mode: "pbd"
 #   }
 #   rotation { z:-45
 #   }
-#   angular_damping: 15.0
+#   angular_damping: 30.0
 #   angle_limit {
 #     min: -45.0
 #     max: 45.0
 #   }
-#   limit_strength: 100.0
+#   limit_strength: 60.0
 #   spring_damping: 10.0
 # }
 # actuators {
 #   name: "body_leg_0"
 #   joint: "body_leg_0"
-#   strength: 100.0
+#   strength: 60.0
 #   angle {
 #   }
 # }
 # actuators {
 #   name: "leg_0_1_2"
 #   joint: "leg_0_1_2"
-#   strength: 100.0
+#   strength: 60.0
 #   angle {
 #   }
 # }
 # actuators {
 #   name: "leg_0_2_3"
 #   joint: "leg_0_2_3"
-#   strength: 100.0
+#   strength: 60.0
 #   angle {
 #   }
 # }
 # actuators {
 #   name: "body_leg_1"
 #   joint: "body_leg_1"
-#   strength: 100.0
+#   strength: 60.0
 #   angle {
 #   }
 # }
 # actuators {
 #   name: "leg_1_1_2"
 #   joint: "leg_1_1_2"
-#   strength: 100.0
+#   strength: 60.0
 #   angle {
 #   }
 # }
 # actuators {
 #   name: "leg_1_2_3"
 #   joint: "leg_1_2_3"
-#   strength: 100.0
+#   strength: 60.0
 #   angle {
 #   }
 # }
 # actuators {
 #   name: "body_leg_2"
 #   joint: "body_leg_2"
-#   strength: 100.0
+#   strength: 60.0
 #   angle {
 #   }
 # }
 # actuators {
 #   name: "leg_2_1_2"
 #   joint: "leg_2_1_2"
-#   strength: 100.0
+#   strength: 60.0
 #   angle {
 #   }
 # }
 # actuators {
 #   name: "leg_2_2_3"
 #   joint: "leg_2_2_3"
-#   strength: 100.0
+#   strength: 60.0
 #   angle {
 #   }
 # }
 # actuators {
 #   name: "body_leg_3"
 #   joint: "body_leg_3"
-#   strength: 100.0
+#   strength: 60.0
 #   angle {
 #   }
 # }
 # actuators {
 #   name: "leg_3_1_2"
 #   joint: "leg_3_1_2"
-#   strength: 100.0
+#   strength: 60.0
 #   angle {
 #   }
 # }
 # actuators {
 #   name: "leg_3_2_3"
 #   joint: "leg_3_2_3"
-#   strength: 100.0
+#   strength: 60.0
 #   angle {
 #   }
 # }
 # actuators {
 #   name: "body_leg_4"
 #   joint: "body_leg_4"
-#   strength: 100.0
+#   strength: 60.0
 #   angle {
 #   }
 # }
 # actuators {
 #   name: "leg_4_1_2"
 #   joint: "leg_4_1_2"
-#   strength: 100.0
+#   strength: 60.0
 #   angle {
 #   }
 # }
 # actuators {
 #   name: "leg_4_2_3"
 #   joint: "leg_4_2_3"
-#   strength: 100.0
+#   strength: 60.0
 #   angle {
 #   }
 # }
 # actuators {
 #   name: "body_leg_5"
 #   joint: "body_leg_5"
-#   strength: 100.0
+#   strength: 60.0
 #   angle {
 #   }
 # }
 # actuators {
 #   name: "leg_5_1_2"
 #   joint: "leg_5_1_2"
-#   strength: 100.0
+#   strength: 60.0
 #   angle {
 #   }
 # }
 # actuators {
 #   name: "leg_5_2_3"
 #   joint: "leg_5_2_3"
-#   strength: 100.0
+#   strength: 60.0
 #   angle {
 #   }
 # }
