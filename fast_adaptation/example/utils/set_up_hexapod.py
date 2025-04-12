@@ -195,6 +195,7 @@ def set_up_hexapod(
     episode_length: int,
     batch_size: int,
     random_key: RNGKey,
+    damage:bool = False,
 ) -> Tuple:
 
     # Init environment
@@ -232,6 +233,8 @@ def set_up_hexapod(
         actions = actions.at[jnp.asarray([2, 5, 8, 11, 14, 17])].set(
             -bottom_actions * (jnp.pi / 4) * (180 / jnp.pi)
         )
+        if damage:
+            actions = actions.at[jnp.asarray([3, 4, 5])].set(jnp.pi)
         return actions
 
     inference_fn = jax.jit(inference)

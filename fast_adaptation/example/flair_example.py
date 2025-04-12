@@ -593,7 +593,7 @@ class EnvironmentManager:
     methods and attributes. 
     """
 
-    def __init__(self, map_elites_map: str, sensor_freq: float) -> None:
+    def __init__(self, map_elites_map: str, sensor_freq: float,damage:bool=False) -> None:
 
         # Create a random key
         random_seed = int(time.time() * 1e6) % (2**32)
@@ -626,6 +626,7 @@ class EnvironmentManager:
             episode_length=None,
             batch_size=None,
             random_key=subkey,
+            damage=damage
         )
 
         # Infer number of repetitions
@@ -1627,6 +1628,8 @@ if __name__ == "__main__":
     # Adaptation On or Off
     parser.add_argument("--adaptation-off", action="store_true")
 
+    parser.add_argument("--damage", action="store_true")
+
     # Frequency set to the same ratio as the real robot
     parser.add_argument("--sensor-freq", default=50, type=float)
     parser.add_argument("--command-freq", default=10, type=float)
@@ -1716,7 +1719,7 @@ if __name__ == "__main__":
         scaling_value = 1.0
 
     # Environment initialisation 
-    env_manager = EnvironmentManager(map_elites_map=args.map_elites_map, sensor_freq=args.sensor_freq)
+    env_manager = EnvironmentManager(map_elites_map=args.map_elites_map, sensor_freq=args.sensor_freq,damage=args.damage)
     grid_resolution, min_command, max_command = env_manager.get_grid_details()
     
     """
