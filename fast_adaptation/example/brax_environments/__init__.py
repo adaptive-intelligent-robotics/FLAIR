@@ -68,7 +68,7 @@ def create(
     eval_metrics: bool = False,
     fixed_init_state: bool = False,
     qdax_wrappers_kwargs: Optional[List] = None,
-    damage:bool = False
+    damage:bool = False,
     **kwargs: Any,
 ) -> Union[Env, QDEnv]:
     """Creates an Env with a specified brax system.
