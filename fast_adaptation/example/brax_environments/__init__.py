@@ -49,7 +49,7 @@ _qdax_custom_envs = {
     "hexapod_no_reward_velocity": {
         "env": "hexapod_no_reward",
         "wrappers": [XYawVelocityWrapper],
-        "kwargs": [{"minval": [-0.2, -0.2], "maxval": [0.2, 0.2]}, {}],
+        "kwargs": [{"minval": [-0.05, -0.05], "maxval": [0.05, 0.05]}, {}],
     },
     "hexapod_control_reward_velocity": {
         "env": "hexapod_control",
