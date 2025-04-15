@@ -36,7 +36,7 @@ from functionality_controller.data_collection import DataCollection
     
 
 # Import the path config
-from path_config import chicane_path, chicane_number_laps, wind_path, wind_number_laps
+from path_config import chicane_path, chicane_number_laps
 
 # Import the environment
 from utils.set_up_hexapod import set_up_hexapod
@@ -103,10 +103,10 @@ class Driver:
         self.lap = 0
 
         # Parameters
-        self.error_threshold = 0.7
+        self.error_threshold = 0.5
         self.min_driver_speed = 0.0
         self.max_driver_speed = 0.03
-        self.max_driver_rotation = 0.1
+        self.max_driver_rotation = 0.05
 
     def reset(self) -> None:
         self.target = 0
@@ -680,38 +680,6 @@ class EnvironmentManager:
         self.random_key, subkey = jax.random.split(self.random_key)
         self.env_state = self.reset_fn(subkey)
 
-        #@partial(jax.jit, static_argnames=("play_step_fn", "length"))
-        #def generate_unroll_time(
-        #    env_state: Any,
-        #    timestep: int,
-        #    policy_params: jnp.ndarray,
-        #    random_key: jax.random.key,
-        #    length: int,
-        #    play_step_fn: Any,
-        #) -> Tuple[Any, jnp.ndarray, int]:
-
-        #    def _scan_play_step_fn(
-        #        carry: Tuple[Any, jnp.ndarray, jax.random.key, int], unused_arg: Any
-        #    ) -> Tuple[Tuple[Any, jnp.ndarray, jax.random.key, int], jnp.ndarray]:
-        #        env_state, policy_params, random_key, transitions, timestep = play_step_fn(
-        #            *carry
-        #        )
-        #        return (env_state, policy_params, random_key, timestep), transitions
-
-        #    (state, _, _, timestep), transitions = jax.lax.scan(
-        #        _scan_play_step_fn,
-        #        (env_state, policy_params, random_key, timestep),  
-        #        (),
-        #        length=length,
-        #    )
-        #    return state, transitions, timestep
-
-        #self.generate_unroll_time = jax.jit(partial(
-        #    generate_unroll_time, 
-        #    length=self.repetitions, 
-        #    play_step_fn=play_step_fn,
-        #))
-
         # Empty container to average speed reading across the replications
         self.sensor_vx = jnp.zeros((self.repetitions,))
         self.sensor_vy = jnp.zeros((self.repetitions,))
@@ -891,13 +859,11 @@ class PerturbationManager:
         self.track_scaling = False
         self.left_track_scaling = 1.0
         self.right_track_scaling = 1.0
-        self.wind = False
 
     def new_perturbation(
         self, 
         left_scaling: float,
         right_scaling: float,
-        wind: bool,
         state: np.ndarray
     ) -> None:
         """Update the perturbation to apply."""
@@ -921,14 +887,6 @@ class PerturbationManager:
                 print(f"Stopping scaling perturbation.")
                 self.track_scaling = False
 
-        # Detect wind change
-        if self.wind != wind:
-            if wind:
-                print(f"Starting wind perturbation.")
-            else:
-                print(f"Stopping wind perturbation.")
-            self.wind = wind
-
     def apply_perturbation(
         self, 
         cmd_lin_x: float, 
@@ -937,9 +895,7 @@ class PerturbationManager:
     ) -> Tuple[float, float]:
         """Apply the corruption due to any perturbation."""
 
-        if self.wind:
-            return self._corrupt_wind(cmd_lin_x=cmd_lin_x, cmd_ang_z=cmd_ang_z, angle=current_state[5])
-        elif self.track_scaling:
+        if self.track_scaling:
             return self._corrupt_state(cmd_lin_x=cmd_lin_x, cmd_ang_z=cmd_ang_z)
         return cmd_lin_x, cmd_ang_z 
 
@@ -977,31 +933,6 @@ class PerturbationManager:
         )
 
         return linear_vel_corrupted, -angular_vel_corrupted
-
-    def _corrupt_wind(
-        self, cmd_lin_x: float, cmd_ang_z: float, angle: float,
-    ) -> Tuple[float, float]:
-
-        point = 0.0
-        error = point - angle
-        error *= 0.6/np.pi
-        perturbation = np.clip(abs(error), 0, 0.6)
-
-        if error < 0:
-            old_perturbation = self.left_track_scaling
-            self.left_track_scaling = 1.0 - perturbation
-        else:
-            old_perturbation = self.right_track_scaling
-            self.right_track_scaling = 1.0 - perturbation
-
-        cmd_lin_x, cmd_ang_z = self._corrupt_state(cmd_lin_x=cmd_lin_x, cmd_ang_z=cmd_ang_z)
-        if error < 0:
-            self.left_track_scaling = old_perturbation
-        else:
-            self.right_track_scaling = old_perturbation
-
-        return cmd_lin_x, cmd_ang_z
-
 
 
 ###################
@@ -1561,22 +1492,17 @@ class MetricManager:
         scaling: np.ndarray,
         scaling_side: np.ndarray,
         scaling_amplitude: np.ndarray, 
-        wind: np.ndarray,
         broken_leg: np.ndarray,
-        broken_leg_index: np.ndarray,
     ) -> None:
         """Same content as /vicon_configuration in influx."""
 
         config = {
             "path": str(path),
-            "small_loop": str(wind_path * wind_number_laps),
             "chicane": str(chicane_path * chicane_number_laps),
             "scaling": str(scaling),
             "scaling_sides": str(scaling_side),
             "scaling_amplitudes": str(scaling_amplitude),
             "broken_leg": str(broken_leg),
-            "broken_leg_index": str(broken_leg_index),
-            "wind": str(wind),
             "adaptation_on": not(self.adaptation_off),
             "min_speed": min_driver_speed,
             "max_speed": max_driver_speed,
@@ -1628,8 +1554,6 @@ if __name__ == "__main__":
     # Adaptation On or Off
     parser.add_argument("--adaptation-off", action="store_true")
 
-    parser.add_argument("--damage", action="store_true")
-
     # Frequency set to the same ratio as the real robot
     parser.add_argument("--sensor-freq", default=50, type=float)
     parser.add_argument("--command-freq", default=10, type=float)
@@ -1637,8 +1561,8 @@ if __name__ == "__main__":
     # As not asynchroneous, set reasonable model training frequency
     parser.add_argument("--model-training-freq", default=2, type=float)
 
-    # Circuit: chicane static, chicane dynamic or wind
-    parser.add_argument("--circuit", default="chicane_static", type=str)
+    # Circuit: chicane_broken_leg, chicane static, chicane dynamic
+    parser.add_argument("--circuit", default="chicane_broken_leg", type=str)
     parser.add_argument("--perturbation-off", action="store_true")
 
     # Number of reps
@@ -1667,124 +1591,67 @@ if __name__ == "__main__":
     )
 
     # Circuit initialisation 
-    if args.circuit == "chicane_static":
+    if "chicane" in args.circuit:
         path = chicane_path * chicane_number_laps
         number_laps = chicane_number_laps
         section = "Chicane"
-    elif args.circuit == "chicane_dynamic":
-        path = chicane_path * chicane_number_laps
-        number_laps = chicane_number_laps
-        section = "Chicane"
-    elif args.circuit == "chicane_broken_leg":
-        path = chicane_path * chicane_number_laps
-        number_laps = chicane_number_laps
-        section = "Chicane"
-    elif args.circuit == "wind":
-        path = wind_path * wind_number_laps
-        number_laps = wind_number_laps
-        section = "Wind"
     else:
         assert 0, "!!!ERROR!!! Undefined circuit."
 
     # Perturbation initialisation
+    perturbation_in_env = False
     scaling = [False for way_point in range (len(path))]
     scaling_side = ["right" for way_point in range (len(path))]
     broken_leg = [False for way_point in range (len(path))]
-    broken_leg_index = [4 for way_point in range (len(path))]
     scaling_amplitude = [0.7 for way_point in range (len(path))]
-    wind = [False for way_point in range (len(path))]
     if not(args.perturbation_off):
         if args.circuit == "chicane_static":
+            print("\n  Applying STATIC perturbation.\n")
             scaling = [True for way_point in range (len(path))]
             damage_type = "static_scaling"
             scaling_value = 0.7
         elif args.circuit == "chicane_dynamic":
+            print("\n  Applying DYNAMIC perturbation.\n")
             scaling = [True for way_point in range (len(path))]
             scaling_amplitude = [0.7] * 5 + [0.4] * 12
             damage_type = "dynamic_value_scaling"
             scaling_value = 0.7
         elif args.circuit == "chicane_broken_leg":
+            print("\n  Applying BROKEN LEG perturbation.\n")
             broken_leg = [True for way_point in range (len(path))]
-            broken_leg_index = [4 for way_point in range (len(path))]
             damage_type = "broken_leg"
-            scaling_value = 4
-        elif args.circuit == "wind":
-            wind = [True for way_point in range (len(path))]
-            damage_type = "wind"
             scaling_value = 1.0
+            perturbation_in_env = True
         else:
             assert 0, "!!!ERROR!!! Undefined circuit."
     else:
+        print("\n  Applying NO perturbation.\n")
         damage_type = "none"
         scaling_value = 1.0
 
     # Environment initialisation 
-    env_manager = EnvironmentManager(map_elites_map=args.map_elites_map, sensor_freq=args.sensor_freq,damage=args.damage)
+    env_manager = EnvironmentManager(
+        map_elites_map=args.map_elites_map, 
+        sensor_freq=args.sensor_freq,
+        damage=perturbation_in_env,
+    )
     grid_resolution, min_command, max_command = env_manager.get_grid_details()
     
-    """
-    # Some timing debug
-    start_t = time.time()
-    env_state = env_manager.env.reset(env_manager.random_key)
-    print(f"\n\nReset took {time.time() - start_t}.")
-
-    cmd_lin_x = 0.0
-    cmd_ang_z = 0.1
-
-    start_t = time.time()
-    batch_of_descriptors = jnp.expand_dims(jnp.asarray([cmd_lin_x, cmd_ang_z]), axis=0)
-    indices = get_cells_indices(
-        batch_of_descriptors=batch_of_descriptors, 
-        centroids=env_manager.repertoire.centroids,
-    )
-    params = jax.tree_util.tree_map(
-        lambda x: x[indices].squeeze(), env_manager.repertoire.genotypes
-    )
-    timestep = 0
-    jax.tree_util.tree_map(
-        lambda x: x.block_until_ready(), params
-    )  # ensure timing accuracy
-    print(f"\n\nLoading parameters took {time.time() - start_t}.")
-
-    start_t = time.time()
-    action = env_manager.inference_fn(params, env_state, timestep)
-    jax.tree_util.tree_map(
-        lambda x: x.block_until_ready(), action
-    )  # ensure timing accuracy
-    print(f"\n\nInference took {time.time() - start_t}.")
-
-    start_t = time.time()
-    env_step = jax.jit(env_manager.env.step)
-    print(f"\n\nStep jitting took {time.time() - start_t}.")
-
-    # Apply it in the environment
-    start_t = time.time()
-    env_state = env_step(env_state, action)
-    print(f"\n\nEnvironment-only step took {time.time() - start_t}.")
-
-    start_t = time.time()
-    for _ in range (5):
-        env_state = env_step(env_state, action)
-    print(f"\n\n5 steps took {time.time() - start_t}.")
-
-    start_t = time.time()
-    env_state = env_manager.step(
-        cmd_lin_x=0.0,
-        cmd_ang_z=0.1,
-    )
-    print(f"\n\nEnvironment-manager step with {env_manager.repetitions} repetitions took {time.time() - start_t}.")
-
-
-    """
-
     # Perturbation initialisation
-    perturbation_manager = PerturbationManager(
-        wheel_base=WHEEL_BASE,
-        wheel_radius=WHEEL_RADIUS,
-        wheel_max_velocity=WHEEL_MAX_VELOCITY,
-    )
+    if perturbation_in_env:
+        print("!!!WARNING!!! Perturbation is applied as part of the environment.")
+    else:
+        perturbation_manager = PerturbationManager(
+            wheel_base=WHEEL_BASE,
+            wheel_radius=WHEEL_RADIUS,
+            wheel_max_velocity=WHEEL_MAX_VELOCITY,
+        )
 
     # FLAIR Initialisation 
+    if args.adaptation_off:
+        print("\n NOT using FLAIR.\n")
+    else:
+        print("\n Using FLAIR.\n")
     flair = FLAIR(
         adaptation_off=args.adaptation_off,
         map_elites_map=args.map_elites_map,
@@ -1811,12 +1678,10 @@ if __name__ == "__main__":
         scaling=scaling,
         scaling_side=scaling_side,
         scaling_amplitude=scaling_amplitude,
-        wind=wind,
         broken_leg=broken_leg,
-        broken_leg_index=broken_leg_index,
     )
 
-    print(f"Done initialising the pipeline, took: {time.time() - start_t}.")
+    print(f"\nDone initialising the pipeline, took: {time.time() - start_t}.")
     start_t = time.time()
 
     #############
@@ -1826,7 +1691,7 @@ if __name__ == "__main__":
     for rep in range (args.num_reps):
 
         print(f"\nPerforming rep {rep + 1} / {args.num_reps}.")
-        print(f"Initialising and reseting elements.")
+        print(f"\n  Initialising and reseting elements.\n")
         start_rep_t = time.time()
 
         # Reset the environment
@@ -1886,7 +1751,7 @@ if __name__ == "__main__":
             wz=sensor_wz,
         )
 
-        print(f"Done initialising and reseting, took: {time.time() - start_rep_t}.")
+        print(f"\n  Done initialising and reseting, took: {time.time() - start_rep_t}.")
         print(f"\n  Driver starting.")
 
         try:
@@ -1932,14 +1797,18 @@ if __name__ == "__main__":
                 )
 
                 # Fourth, apply the perturbation
-                (
-                    perturbation_cmd_lin_x, 
-                    perturbation_cmd_ang_z, 
-                ) = perturbation_manager.apply_perturbation(
-                    adaptation_cmd_lin_x, 
-                    adaptation_cmd_ang_z, 
-                    state,
-                )
+                if perturbation_in_env:
+                    perturbation_cmd_lin_x = adaptation_cmd_lin_x
+                    perturbation_cmd_ang_z = adaptation_cmd_ang_z
+                else:
+                    (
+                        perturbation_cmd_lin_x, 
+                        perturbation_cmd_ang_z, 
+                    ) = perturbation_manager.apply_perturbation(
+                        adaptation_cmd_lin_x, 
+                        adaptation_cmd_ang_z, 
+                        state,
+                    )
 
                 # Fifth, save the adaptation metrics
                 metric_manager.add_adaptation_metrics_rep(
@@ -1995,11 +1864,6 @@ if __name__ == "__main__":
                         print("!!!ERROR!!! Robot exploded, exiting.")
                         driver_done = True
                         break
-
-                    # if total_timesteps > 200:
-                    #     print("too long")
-                    #     driver_done = True
-                    #     break
 
                     # Add to the buffers for FLAIR
                     sensor_time = ROSTimestamp(timestep, args.sensor_freq)
@@ -2063,7 +1927,7 @@ if __name__ == "__main__":
 
                 # print(f"    Debug - Data Collection time: {time.time() - debug_start_t}.")
 
-                if total_timesteps % 10 == 0:
+                if total_timesteps % 100 == 0:
                     print(f"\n    Debug - total_timesteps: {total_timesteps}.")
                     print(f"    Debug - Human: {human_cmd_lin_x}, {human_cmd_ang_z}.")
                     print(f"    Debug - Adapt: {adaptation_cmd_lin_x}, {adaptation_cmd_ang_z}.")
@@ -2072,11 +1936,11 @@ if __name__ == "__main__":
                 total_timesteps += 1
 
 
-            print(f"Done with rep {rep + 1} / {args.num_reps}, took: {time.time() - start_rep_t}.")
+            print(f"\nDone with rep {rep + 1} / {args.num_reps}, took: {time.time() - start_rep_t}.")
 
         except Exception:
-            print(f"Failed rep {rep + 1} / {args.num_reps}, took: {time.time() - start_rep_t}.")
-            print("Still saving the metrics and html.")
+            print(f"\nFailed rep {rep + 1} / {args.num_reps}, took: {time.time() - start_rep_t}.")
+            print("Still saving the metrics and html.\n")
             traceback.print_exc()
 
         # Save the metrics
