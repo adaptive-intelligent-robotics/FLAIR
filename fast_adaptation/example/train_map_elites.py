@@ -52,7 +52,7 @@ parser.add_argument("--name", default="MAP-Elites", type=str)
 parser.add_argument("--num-generations", default=1000, type=int)
 
 # Compare size (required)
-parser.add_argument("--batch-size", default=2048*2, type=int)
+parser.add_argument("--batch-size", default=4096, type=int)
 
 # Environment
 parser.add_argument("--env-name", default="hexapod_velocity", type=str)
