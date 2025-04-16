@@ -117,83 +117,26 @@ class Driver:
         return self.min_driver_speed, self.max_driver_speed
 
     def follow_path(
-            self, 
-            x_pos: float, 
-            y_pos: float, 
-            angle:float,
-            quaternion = np.array,
-        ) -> Tuple[bool, float, float]:
+        self, 
+        x_pos: float, 
+        y_pos: float, 
+        quaternion: np.array,
+    ) -> Tuple[bool, float, float]:
         """
         Create the path tracking command from the sensor readings.
         Code from the Vicon driver of the robotic experiments.
         """
 
-        # # # Compute the difference in position
-        # dx = self.target_tx - x_pos
-        # dy = self.target_ty - y_pos
-
-        # # Distance and angle to the goal
-        # distance = math.hypot(dx, dy)
-        # angle_to_goal = math.atan2(dy, dx)
-
-        # # Calculate heading error
-        # angle_heading = angle_to_goal - angle
-
-        # # Normalize heading error to [-pi, pi]
-        # angle_heading = (angle_heading + math.pi) % (2 * math.pi) - math.pi
-
-        # # If already at target, go to next target
-        # if distance < self.error_threshold:
-
-        #     # If done with the path, print it
-        #     if self.target == (len(self.path)-1):
-        #         print(f"  Driver is done.")
-        #         return True, 0.0, 0.0
-
-        #     # Else recursively call this function
-        #     print(f"\n  Driver - reached target {self.target}, at: {self.path[self.target]}, sensors: ({x_pos}, {y_pos}).")
-        #     self.target += 1
-        #     self.target_tx, self.target_ty = self.path[self.target]
-        #     self.lap = self.target // (len(self.path) // self.number_laps)
-        #     print(f"  Driver - next target: {self.target}, at: {self.path[self.target]}, lap: {self.lap}.")
-
-        #     return self.follow_path(
-        #         x_pos=x_pos,
-        #         y_pos=y_pos,
-        #         angle=angle,
-        #     )
-        
-        # # Else, proportional controller
-        # # Gain should be < 1/25, if they = 1/25 it means that we hope to compensate all error until next call
-        # linear_velocity = np.clip(0.005 * distance, self.min_driver_speed, self.max_driver_speed)
-        # angular_velocity = np.clip(0.02 * heading_error, -self.max_driver_rotation, self.max_driver_rotation)
-
-        # if abs(heading_error) <= 0.1:
-        #     angular_velocity = 0
-
-        # if abs(heading_error)>1.0:
-        #     v_lin = 0.001
-
-        # return False, linear_velocity, angular_velocity
-
-        # Previous version
-
         # Current target position
         x, y = self.path[self.target]
         self.target_tx, self.target_ty = x, y
 
-        sensor_yaw, sensor_roll, sensor_pitch = brax.math.quat_to_euler(quaternion)
-        print("Angle", angle,sensor_pitch)
-
         # Compute the error
         error_x = (x - x_pos) 
         error_y = (y - y_pos) 
-        error_frame = brax.math.inv_rotate(np.asarray([error_x, error_y, 0]),quaternion)
-
+        error_frame = brax.math.inv_rotate(np.asarray([error_x, error_y, 0]), quaternion)
         angle_heading = np.arctan2(error_frame[1], error_frame[0])
-        
         distance = np.linalg.norm(error_frame)
-
 
         # If already at target, go to next target
         if distance < self.error_threshold:
@@ -213,7 +156,6 @@ class Driver:
                 x_pos=x_pos,
                 y_pos=y_pos,
                 quaternion=quaternion,
-                angle=angle,
             )
         
         # vx proportional to distance
@@ -222,31 +164,13 @@ class Driver:
         # Compute the new wz command
         wz = np.clip(0.1 * angle_heading, -self.max_driver_rotation, self.max_driver_rotation)
 
-        
-
-        # if abs(angle_heading) > np.deg2rad(90):
-        #     # Choose to drive backward
-        #     # angle_heading = angle_heading - np.pi if angle_heading > 0 else angle_heading + np.pi
-        #     # angle_heading = (angle_heading + np.pi) % (2 * np.pi) - np.pi
-
-        #     adjusted_angle = angle_heading - np.pi if angle_heading > 0 else angle_heading + np.pi
-        #     v_lin = -np.clip(0.1 * distance, self.min_driver_speed, self.max_driver_speed)
-        #     wz = np.clip(0.1 * adjusted_angle, -self.max_driver_rotation, self.max_driver_rotation)
-        # else:
-        #     # Drive forward
-        #     v_lin = np.clip(0.1 * distance, self.min_driver_speed, self.max_driver_speed)
-        #     wz = np.clip(0.1 * angle_heading, -self.max_driver_rotation, self.max_driver_rotation)
-
-
-        if abs(angle_heading)<np.deg2rad(10):
+        if abs(angle_heading) < np.deg2rad(10):
             wz = 0.0
 
-        if abs(angle_heading)>np.deg2rad(45):
+        if abs(angle_heading) > np.deg2rad(45):
             v_lin = 0.005
-        print("Angle Heading", angle_heading)
         
-        print(f"Commanded Velocities: {v_lin:.3f} m/s, {wz:.3f} rad/s")
-
+        # print(f"Commanded Velocities: {v_lin:.3f} m/s, {wz:.3f} rad/s")
 
         return False, v_lin, wz
 
@@ -1780,7 +1704,6 @@ if __name__ == "__main__":
                 driver_done, human_cmd_lin_x, human_cmd_ang_z = driver.follow_path(
                     x_pos=sensor_tx,
                     y_pos=sensor_ty,
-                    angle=sensor_pitch,
                     quaternion=quaternion,
                 )
                 #human_cmd_lin_x = 0.0
