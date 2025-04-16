@@ -13,14 +13,14 @@ This is the way to go if you want to see an example of FLAIR working quickly!
 
 This pipeline uses [Jax](https://docs.jax.dev/en/latest/index.html), [QDax](https://github.com/adaptive-intelligent-robotics/QDax) and the [Brax simulator](https://github.com/google/brax). 
 
-**Note** While these libraries are usually used on a GPU, we developed the following example to be run on CPU or any other hardware. Thus, there are no hardware requirements to run this example. 
+**Note.** While these libraries are usually used on a GPU, we developed the following example to be run on CPU to avoid specific hardware requirements. 
 However, as a consequence, do not expect significative speed-up from running on GPU. 
 
 ### Requirements and Singularity container
 
 We provide the detailed requirements in [singularity/requirements.txt](./singularity/requirements.txt).
 
-Alternatively, we also provide the def file of a [Singularity / Apptainer](https://apptainer.org/docs/user/latest/) container that installed all the required libraries. This def file can be found in [singularity/singularity.def](./singularity/singularity.def).
+Alternatively, we also provide the def file of a [Singularity / Apptainer](https://apptainer.org/docs/user/latest/) container that install all the required libraries. This def file can be found in [singularity/singularity.def](./singularity/singularity.def). To build a container from this def file, enter the [singularity/](./singularity/) folder and run the `build_final_image` script. 
 
 ### Running a FLAIR example
 
@@ -47,7 +47,7 @@ After running this command, the results will appear in the `flair_example` folde
 
 ### Low-level controller training
 
-If you are interested in re-training the low-level controller of this pipeline, you can execute the `train_map_elites.py` as follows:
+If you are interested in re-training the low-level controller of this pipeline, you can execute the `train_map_elites.py` script as follows:
 
 ```
 python3 train_map_elites.py
@@ -98,7 +98,7 @@ The script to start our docker pipeline can be run via the [start_flair.sh](fast
 We run the docker-compose pipeline on our NVIDIA Jetson Orin 32Gb that is directly connected to a VectorNav V100 IMU and a Zed2 Camera in addition to the GVRBot. The docker-compose file that is executed can be found [here](fast_adaptation/docker_compose_flair.yaml).
 
 
-**Note** Our setup requires the user to first start the ROS server on the GVRBot before running our pipeline (we note that the GVRBot runs ROS whereas our codebase is written in ROS2, but we provide a rosbridge as part of our pipeline that handles all the communication).
+**Note.** Our setup requires the user to first start the ROS server on the GVRBot before running our pipeline (we note that the GVRBot runs ROS whereas our codebase is written in ROS2, but we provide a rosbridge as part of our pipeline that handles all the communication).
 
 
 #### Automatic Driver
