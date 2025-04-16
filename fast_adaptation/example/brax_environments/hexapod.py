@@ -15,6 +15,7 @@ class Hexapod(env.Env):
         self,
         legacy_spring: bool = False,
         damage: bool = False,
+        reset_noise_scale: float = 0.0,
         **kwargs: Any,
     ) -> None:
         config = _SYSTEM_CONFIG if not damage else _SYSTEM_CONFIG_DMG
@@ -22,12 +23,20 @@ class Hexapod(env.Env):
             print("!! USING DAMAGED CONFIG !!")
         # config = _SYSTEM_CONFIG_SPRING if legacy_spring else _SYSTEM_CONFIG
         super().__init__(config=config, **kwargs)
+        self._reset_noise_scale = reset_noise_scale
+
+    def _gaussian_noise(self, rng: jp.ndarray) -> jp.ndarray:
+        return (
+            jax.random.normal(rng, (self.sys.num_joint_dof,)) * self._reset_noise_scale
+        )
 
     def reset(self, rng: jp.ndarray) -> env.State:
         """Resets the environment to an initial state."""
 
-        qpos = self.sys.default_angle()
-        qvel = jp.zeros((self.sys.num_joint_dof,))
+        rng, rng1, rng2 = jp.random_split(rng, 3)
+        qpos = self.sys.default_angle() + self._gaussian_noise(rng1)
+        qvel = self._gaussian_noise(rng2)
+
         qp = self.sys.default_qp(joint_angle=qpos, joint_velocity=qvel)
         info = self.sys.info(qp)
         obs = self._get_obs(qp, info)

@@ -196,6 +196,7 @@ def set_up_hexapod(
     batch_size: int,
     random_key: RNGKey,
     damage:bool = False,
+    reset_noise_scale: float = 0.0,
 ) -> Tuple:
 
     # Init environment
@@ -203,7 +204,8 @@ def set_up_hexapod(
     env = brax_environments.create(
         env_name,
         episode_length=episode_length,
-        damage = damage
+        damage=damage,
+        reset_noise_scale=reset_noise_scale,
     )
 
     # Define the fonction to infer the next action

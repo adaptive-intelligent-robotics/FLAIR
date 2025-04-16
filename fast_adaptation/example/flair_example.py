@@ -593,7 +593,7 @@ class EnvironmentManager:
     methods and attributes. 
     """
 
-    def __init__(self, map_elites_map: str, sensor_freq: float,damage:bool=False) -> None:
+    def __init__(self, map_elites_map: str, sensor_freq: float, damage: bool, reset_noise_scale: float) -> None:
 
         # Create a random key
         random_seed = int(time.time() * 1e6) % (2**32)
@@ -626,7 +626,8 @@ class EnvironmentManager:
             episode_length=None,
             batch_size=None,
             random_key=subkey,
-            damage=damage
+            damage=damage,
+            reset_noise_scale=reset_noise_scale,
         )
 
         # Infer number of repetitions
@@ -1275,7 +1276,6 @@ class MetricManager:
         plt.legend()
         plt.savefig(f"{self.folder}/hexapod_{self.circuit}_replication_wz_{rep}.png")
 
-
         # Save html
         if self.save_html:
             html_file = html.render(env_sys, [s.qp for s in self.rollout])
@@ -1559,11 +1559,14 @@ if __name__ == "__main__":
     parser.add_argument("--command-freq", default=10, type=float)
 
     # As not asynchroneous, set reasonable model training frequency
-    parser.add_argument("--model-training-freq", default=2, type=float)
+    parser.add_argument("--model-training-freq", default=1, type=float)
 
     # Circuit: chicane_broken_leg, chicane static, chicane dynamic
     parser.add_argument("--circuit", default="chicane_broken_leg", type=str)
     parser.add_argument("--perturbation-off", action="store_true")
+
+    # Randomness of environment initialisation
+    parser.add_argument("--reset-noise-scale", default=0.1, type=float)
 
     # Number of reps
     parser.add_argument("--num-reps", default=1, type=int)
@@ -1634,6 +1637,7 @@ if __name__ == "__main__":
         map_elites_map=args.map_elites_map, 
         sensor_freq=args.sensor_freq,
         damage=perturbation_in_env,
+        reset_noise_scale=args.reset_noise_scale,
     )
     grid_resolution, min_command, max_command = env_manager.get_grid_details()
     
