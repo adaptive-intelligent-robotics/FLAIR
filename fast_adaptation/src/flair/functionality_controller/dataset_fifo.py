@@ -8,15 +8,16 @@ from __future__ import annotations
 import json
 import time
 from typing import Any, Dict, Tuple
+from functools import partial
 
 import flax
 import jax
 import jax.numpy as jnp
+from functionality_controller.datapoint import DataPoints
 from gpjax.dataset import Dataset
 
-from functionality_controller.datapoint import DataPoints
-
 OUT_OF_BOUND = 50.0
+
 
 class FIFODataset(flax.struct.PyTreeNode):
     """FIFO Dataset with a fix size. Written to be fully jitable."""
@@ -51,6 +52,121 @@ class FIFODataset(flax.struct.PyTreeNode):
         return FIFODataset.create(dataset.size)
 
     @staticmethod
+    @partial(jax.jit, static_argnames=("num_samples"))
+    def sample(
+        dataset: FIFODataseti, num_samples: int, random_key: jax.random.key
+    ) -> Tuple[
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jax.random.key,
+    ]:
+        """Sample num_samples elements from the FIFO."""
+
+        dataset_empty = dataset.command_x == OUT_OF_BOUND
+        p = (1.0 - dataset_empty) / jnp.sum(1.0 - dataset_empty)
+        p = p.flatten()
+
+        random_key, subkey = jax.random.split(random_key)
+
+        samples_command_x = jax.random.choice(subkey, dataset.command_x.flatten(), shape=(num_samples,), p=p)
+        samples_command_y = jax.random.choice(subkey, dataset.command_y.flatten(), shape=(num_samples,), p=p)
+        samples_gp_prediction_x = jax.random.choice(subkey, dataset.gp_prediction_x.flatten(), shape=(num_samples,), p=p)
+        samples_gp_prediction_y = jax.random.choice(subkey, dataset.gp_prediction_y.flatten(), shape=(num_samples,), p=p)
+        samples_intent_x = jax.random.choice(subkey, dataset.intent_x.flatten(), shape=(num_samples,), p=p)
+        samples_intent_y = jax.random.choice(subkey, dataset.intent_y.flatten(), shape=(num_samples,), p=p)
+        samples_sensor_x = jax.random.choice(subkey, dataset.sensor_x.flatten(), shape=(num_samples,), p=p)
+        samples_sensor_y = jax.random.choice(subkey, dataset.sensor_y.flatten(), shape=(num_samples,), p=p)
+
+        return (
+            samples_command_x,
+            samples_command_y,
+            samples_gp_prediction_x,
+            samples_gp_prediction_y,
+            samples_intent_x,
+            samples_intent_y,
+            samples_sensor_x,
+            samples_sensor_y,
+            random_key,
+        )
+
+    @staticmethod
+    @partial(jax.jit, static_argnames=("num_samples"))
+    def sample_with_next(
+        dataset: FIFODataseti, num_samples: int, random_key: jax.random.key
+    ) -> Tuple[
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jax.random.key,
+    ]:
+        """Sample num_samples elements from the FIFO."""
+
+        dataset_empty = dataset.command_x == OUT_OF_BOUND
+        p = (1.0 - dataset_empty) / jnp.sum(1.0 - dataset_empty)
+        p = p.flatten()
+        p = p.at[-1].set(0)
+
+        random_key, subkey = jax.random.split(random_key)
+
+        samples_command_x = jax.random.choice(subkey, dataset.command_x.flatten(), shape=(num_samples,), p=p)
+        samples_command_y = jax.random.choice(subkey, dataset.command_y.flatten(), shape=(num_samples,), p=p)
+        samples_gp_prediction_x = jax.random.choice(subkey, dataset.gp_prediction_x.flatten(), shape=(num_samples,), p=p)
+        samples_gp_prediction_y = jax.random.choice(subkey, dataset.gp_prediction_y.flatten(), shape=(num_samples,), p=p)
+        samples_intent_x = jax.random.choice(subkey, dataset.intent_x.flatten(), shape=(num_samples,), p=p)
+        samples_intent_y = jax.random.choice(subkey, dataset.intent_y.flatten(), shape=(num_samples,), p=p)
+        samples_sensor_x = jax.random.choice(subkey, dataset.sensor_x.flatten(), shape=(num_samples,), p=p)
+        samples_sensor_y = jax.random.choice(subkey, dataset.sensor_y.flatten(), shape=(num_samples,), p=p)
+
+        next_samples_command_x = jax.random.choice(subkey, jnp.roll(dataset.command_x.flatten(), -1), shape=(num_samples,), p=p)
+        next_samples_command_y = jax.random.choice(subkey, jnp.roll(dataset.command_y.flatten(), -1), shape=(num_samples,), p=p)
+        next_samples_gp_prediction_x = jax.random.choice(subkey, jnp.roll(dataset.gp_prediction_x.flatten(), -1), shape=(num_samples,), p=p)
+        next_samples_gp_prediction_y = jax.random.choice(subkey, jnp.roll(dataset.gp_prediction_y.flatten(), -1), shape=(num_samples,), p=p)
+        next_samples_intent_x = jax.random.choice(subkey, jnp.roll(dataset.intent_x.flatten(), -1), shape=(num_samples,), p=p)
+        next_samples_intent_y = jax.random.choice(subkey, jnp.roll(dataset.intent_y.flatten(), -1), shape=(num_samples,), p=p)
+        next_samples_sensor_x = jax.random.choice(subkey, jnp.roll(dataset.sensor_x.flatten(), -1), shape=(num_samples,), p=p)
+        next_samples_sensor_y = jax.random.choice(subkey, jnp.roll(dataset.sensor_y.flatten(), -1), shape=(num_samples,), p=p)
+
+        return (
+            samples_command_x,
+            samples_command_y,
+            samples_gp_prediction_x,
+            samples_gp_prediction_y,
+            samples_intent_x,
+            samples_intent_y,
+            samples_sensor_x,
+            samples_sensor_y,
+            next_samples_command_x,
+            next_samples_command_y,
+            next_samples_gp_prediction_x,
+            next_samples_gp_prediction_y,
+            next_samples_intent_x,
+            next_samples_intent_y,
+            next_samples_sensor_x,
+            next_samples_sensor_y,
+            random_key,
+        )
+
+
+    @staticmethod
     @jax.jit
     def _invalid_values(array: jnp.ndarray) -> jnp.ndarray:
         mask = jnp.all(array > -jnp.inf, axis=1)
@@ -62,7 +178,11 @@ class FIFODataset(flax.struct.PyTreeNode):
     def _apply_mask(array: jnp.ndarray, mask: jnp.ndarray) -> jnp.ndarray:
         return jnp.where(
             jnp.reshape(
-                jnp.repeat(mask, array.shape[1], total_repeat_length=array.shape[0] * array.shape[1]),
+                jnp.repeat(
+                    mask,
+                    array.shape[1],
+                    total_repeat_length=array.shape[0] * array.shape[1],
+                ),
                 array.shape,
             ),
             array,
@@ -313,4 +433,136 @@ class StateFIFODataset(FIFODataset):
             sensor_x=new_sensor_x,
             sensor_y=new_sensor_y,
             state=new_state,
+        )
+
+    @staticmethod
+    @partial(jax.jit, static_argnames=("num_samples"))
+    def sample(
+        dataset: FIFODataseti, num_samples: int, random_key: jax.random.key
+    ) -> Tuple[
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnpndarray,
+        jax.random.key,
+    ]:
+        """Sample num_samples elements from the FIFO."""
+
+        dataset_empty = dataset.command_x == OUT_OF_BOUND
+        p = (1.0 - dataset_empty) / jnp.sum(1.0 - dataset_empty)
+        p = p.flatten()
+
+        random_key, subkey = jax.random.split(random_key)
+
+        samples_command_x = jax.random.choice(subkey, dataset.command_x.flatten(), shape=(num_samples,), p=p)
+        samples_command_y = jax.random.choice(subkey, dataset.command_y.flatten(), shape=(num_samples,), p=p)
+        samples_gp_prediction_x = jax.random.choice(subkey, dataset.gp_prediction_x.flatten(), shape=(num_samples,), p=p)
+        samples_gp_prediction_y = jax.random.choice(subkey, dataset.gp_prediction_y.flatten(), shape=(num_samples,), p=p)
+        samples_intent_x = jax.random.choice(subkey, dataset.intent_x.flatten(), shape=(num_samples,), p=p)
+        samples_intent_y = jax.random.choice(subkey, dataset.intent_y.flatten(), shape=(num_samples,), p=p)
+        samples_sensor_x = jax.random.choice(subkey, dataset.sensor_x.flatten(), shape=(num_samples,), p=p)
+        samples_sensor_y = jax.random.choice(subkey, dataset.sensor_y.flatten(), shape=(num_samples,), p=p)
+        samples_state = jax.tree_util.tree_map(
+            lambda x: jax.random.choice(subkey, x, shape=(num_samples,), p=p),
+            dataset.state,
+        )
+
+        return (
+            samples_command_x,
+            samples_command_y,
+            samples_gp_prediction_x,
+            samples_gp_prediction_y,
+            samples_intent_x,
+            samples_intent_y,
+            samples_sensor_x,
+            samples_sensor_y,
+            samples_state,
+            random_key,
+        )
+
+    @staticmethod
+    @partial(jax.jit, static_argnames=("num_samples"))
+    def sample_with_next(
+        dataset: FIFODataseti, num_samples: int, random_key: jax.random.key
+    ) -> Tuple[
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnpndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnpndarray,
+        jax.random.key,
+    ]:
+        """Sample num_samples elements from the FIFO."""
+
+        dataset_empty = dataset.command_x == OUT_OF_BOUND
+        p = (1.0 - dataset_empty) / jnp.sum(1.0 - dataset_empty)
+        p = p.flatten()
+        p = p.at[-1].set(0)
+
+        random_key, subkey = jax.random.split(random_key)
+
+        samples_command_x = jax.random.choice(subkey, dataset.command_x.flatten(), shape=(num_samples,), p=p)
+        samples_command_y = jax.random.choice(subkey, dataset.command_y.flatten(), shape=(num_samples,), p=p)
+        samples_gp_prediction_x = jax.random.choice(subkey, dataset.gp_prediction_x.flatten(), shape=(num_samples,), p=p)
+        samples_gp_prediction_y = jax.random.choice(subkey, dataset.gp_prediction_y.flatten(), shape=(num_samples,), p=p)
+        samples_intent_x = jax.random.choice(subkey, dataset.intent_x.flatten(), shape=(num_samples,), p=p)
+        samples_intent_y = jax.random.choice(subkey, dataset.intent_y.flatten(), shape=(num_samples,), p=p)
+        samples_sensor_x = jax.random.choice(subkey, dataset.sensor_x.flatten(), shape=(num_samples,), p=p)
+        samples_sensor_y = jax.random.choice(subkey, dataset.sensor_y.flatten(), shape=(num_samples,), p=p)
+        samples_state = jax.tree_util.tree_map(
+            lambda x: jax.random.choice(subkey, x, shape=(num_samples,), p=p),
+            dataset.state,
+        )
+
+        next_samples_command_x = jax.random.choice(subkey, jnp.roll(dataset.command_x.flatten(), -1), shape=(num_samples,), p=p)
+        next_samples_command_y = jax.random.choice(subkey, jnp.roll(dataset.command_y.flatten(), -1), shape=(num_samples,), p=p)
+        next_samples_gp_prediction_x = jax.random.choice(subkey, jnp.roll(dataset.gp_prediction_x.flatten(), -1), shape=(num_samples,), p=p)
+        next_samples_gp_prediction_y = jax.random.choice(subkey, jnp.roll(dataset.gp_prediction_y.flatten(), -1), shape=(num_samples,), p=p)
+        next_samples_intent_x = jax.random.choice(subkey, jnp.roll(dataset.intent_x.flatten(), -1), shape=(num_samples,), p=p)
+        next_samples_intent_y = jax.random.choice(subkey, jnp.roll(dataset.intent_y.flatten(), -1), shape=(num_samples,), p=p)
+        next_samples_sensor_x = jax.random.choice(subkey, jnp.roll(dataset.sensor_x.flatten(), -1), shape=(num_samples,), p=p)
+        next_samples_sensor_y = jax.random.choice(subkey, jnp.roll(dataset.sensor_y.flatten(), -1), shape=(num_samples,), p=p)
+        next_samples_state = jax.tree_util.tree_map(
+            lambda x: jax.random.choice(subkey, jnp.roll(x, -1), shape=(num_samples,), p=p),
+            dataset.state,
+        )
+
+        return (
+            samples_command_x,
+            samples_command_y,
+            samples_gp_prediction_x,
+            samples_gp_prediction_y,
+            samples_intent_x,
+            samples_intent_y,
+            samples_sensor_x,
+            samples_sensor_y,
+            samples_state,
+            next_samples_command_x,
+            next_samples_command_y,
+            next_samples_gp_prediction_x,
+            next_samples_gp_prediction_y,
+            next_samples_intent_x,
+            next_samples_intent_y,
+            next_samples_sensor_x,
+            next_samples_sensor_y,
+            next_samples_state,
+            random_key,
         )

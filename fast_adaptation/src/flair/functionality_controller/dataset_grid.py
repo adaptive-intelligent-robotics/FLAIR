@@ -17,12 +17,12 @@ import flax
 import jax
 import jax.numpy as jnp
 import numpy as np
-
 from functionality_controller.datapoint import DataPoints
 
 jax.numpy.set_printoptions(threshold=sys.maxsize)
 
 OUT_OF_BOUND = 50.0
+
 
 class Grid(flax.struct.PyTreeNode):
     """Class defining a grid of FIFOs to maintain dataset as well
@@ -71,10 +71,12 @@ class Grid(flax.struct.PyTreeNode):
         """
 
         # Compute grid sizes
-        num_cells = input_bins ** input_dimension
+        num_cells = input_bins**input_dimension
 
         # Compute 1D projection
-        grid_1d_projection = jnp.asarray([input_bins ** j for j in range(input_dimension)])
+        grid_1d_projection = jnp.asarray(
+            [input_bins**j for j in range(input_dimension)]
+        )
         out_of_bound = num_cells * cell_depth + 1
 
         # Create the grid
@@ -521,7 +523,11 @@ class InputGridFIFODataset(flax.struct.PyTreeNode):
     def _apply_mask(array: jnp.ndarray, mask: jnp.ndarray) -> jnp.ndarray:
         return jnp.where(
             jnp.reshape(
-                jnp.repeat(mask, array.shape[1], total_repeat_length=array.shape[0] * array.shape[1]),
+                jnp.repeat(
+                    mask,
+                    array.shape[1],
+                    total_repeat_length=array.shape[0] * array.shape[1],
+                ),
                 array.shape,
             ),
             array,

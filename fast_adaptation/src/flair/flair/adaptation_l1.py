@@ -5,10 +5,10 @@ import multiprocessing
 import os
 import time
 from copy import deepcopy
+from typing import Tuple
 
 import numpy as np
 import rclpy
-from typing import Tuple
 from FLAIR_msg.msg import (
     FLAIRTwist,
     FunctionalityControllerControl,
@@ -28,7 +28,7 @@ from sensor_msgs.msg import Imu
 context = multiprocessing.get_context("forkserver")
 
 # Import the config
-from src.flair.flair.adaptation_config import *
+from src.flair.flair.adaptation_config_l1 import *
 
 ####################
 # Common functions #
@@ -104,66 +104,12 @@ def writeEntry(
     for f in fields:
         pt = pt.field(f[0], f[1])
     try:
-        _ = influx_client.write(record=pt, org="FLAIR", bucket=os.environ["INFLUXDB_BUCKET"])
+        _ = influx_client.write(
+            record=pt, org="FLAIR", bucket=os.environ["INFLUXDB_BUCKET"]
+        )
     except BaseException as e:
         print(e, flush=True)
         pass
-
-
-def send_map(
-    influx_client: InfluxDBClient,
-    logger: logging.Logger,
-    metric_map: np.ndarray,
-    genotypes: np.ndarray,
-    learned_params: np.ndarray,
-    max_x: float,
-    max_y: float,
-) -> None:
-    """Send the current Adaptation map to Influx."""
-
-    # Get map in json format
-    data = np.asarray(metric_map, dtype=np.float32).reshape(-1, 3)
-    x = "["
-    y = "["
-    v = "["
-    g1 = "["
-    g2 = "["
-    id = 0
-
-    for (row, gen) in zip(data, genotypes):
-        x = x + str(row[0]) + ","
-        y = y + str(row[1]) + ","
-        v = v + str(row[2]) + ","
-        g1 = g1 + str(gen[0]) + ","
-        g2 = g2 + str(gen[1]) + ","
-        id += 1
-    x = x[:-1] + "]"
-    y = y[:-1] + "]"
-    v = v[:-1] + "]"
-    g1 = g1[:-1] + "]"
-    g2 = g2[:-1] + "]"
-    jsondata = (
-        '{"x":' + x + ',"y":' + y + ',"v":' + v + ',"g1":' + g1 + ',"g2":' + g2 + "}"
-    )
-
-    # Get p1, p2 values
-    p1 = float(learned_params[0])
-    p2 = float(learned_params[1])
-
-    # Send to Influx
-    fields = [
-        ("Map_stamp", 0.0),
-        ("map", jsondata),
-        ("P1", p1),
-        ("P2", p2),
-        ("Max_x", max_x),
-        ("Max_y", max_y),
-    ]
-    try:
-        writeEntry(influx_client, "/gp_map", fields)
-    except BaseException as e:
-        logger.warning("Warning: Influx sending failed.")
-        logger.warning(e)
 
 
 #############################
@@ -173,11 +119,11 @@ def send_map(
 class SensorCollection(Node):
     def __init__(
         self,
-        sensor_collection_to_gp_collection_datapoint_queue: multiprocessing.Queue,
+        sensor_collection_to_rl_collection_datapoint_queue: multiprocessing.Queue,
         sensor_collection_to_adaptation_datapoint_queue: multiprocessing.Queue,
-        sensor_collection_to_gp_training_reset_queue: multiprocessing.Queue,
-        sensor_collection_to_gp_collection_reset_queue: multiprocessing.Queue,
-        gp_collection_to_sensor_collection_start_queue: multiprocessing.Queue,
+        sensor_collection_to_rl_training_reset_queue: multiprocessing.Queue,
+        sensor_collection_to_rl_collection_reset_queue: multiprocessing.Queue,
+        rl_collection_to_sensor_collection_start_queue: multiprocessing.Queue,
         loglevel: str = "INFO",
     ) -> None:
 
@@ -195,20 +141,20 @@ class SensorCollection(Node):
         self._logger.info("SensorCollection: Starting")
 
         # Store Queues as attribute
-        self.sensor_collection_to_gp_collection_datapoint_queue = (
-            sensor_collection_to_gp_collection_datapoint_queue
+        self.sensor_collection_to_rl_collection_datapoint_queue = (
+            sensor_collection_to_rl_collection_datapoint_queue
         )
         self.sensor_collection_to_adaptation_datapoint_queue = (
             sensor_collection_to_adaptation_datapoint_queue
         )
-        self.sensor_collection_to_gp_training_reset_queue = (
-            sensor_collection_to_gp_training_reset_queue
+        self.sensor_collection_to_rl_training_reset_queue = (
+            sensor_collection_to_rl_training_reset_queue
         )
-        self.sensor_collection_to_gp_collection_reset_queue = (
-            sensor_collection_to_gp_collection_reset_queue
+        self.sensor_collection_to_rl_collection_reset_queue = (
+            sensor_collection_to_rl_collection_reset_queue
         )
-        self.gp_collection_to_sensor_collection_start_queue = (
-            gp_collection_to_sensor_collection_start_queue
+        self.rl_collection_to_sensor_collection_start_queue = (
+            rl_collection_to_sensor_collection_start_queue
         )
 
         # Necessary attributes
@@ -269,7 +215,7 @@ class SensorCollection(Node):
         self.forward_transform_inv = np.linalg.inv(self.forward_transform)
 
         self._logger.info(
-            "SensorCollection: Completed __init__, waiting for GPCollection to start."
+            "SensorCollection: Completed __init__, waiting for RLCollection to start."
         )
 
     def _imu_callback(self, msg: Imu) -> None:
@@ -357,11 +303,12 @@ class SensorCollection(Node):
                 self.v = camera_frame_transform @ word_frame_vel
 
             else:
-                self.v = np.inf
+                self._logger.info("WARNING: Shouldn't be here, if this is not a reset, something is wrong.")
+                self.v = np.zeros((3,))
         self.last_timestamp_zed = current_timestamp
 
     def _system_control_callback(self, msg: SystemControl) -> None:
-        """Reset the GP if asked by system topic."""
+        """Reset the RL if asked by system topic."""
         if not self._sub_system_control_seen:
             self._logger.info("Present: SystemControl")
             self._sub_system_control_seen = True
@@ -374,124 +321,111 @@ class SensorCollection(Node):
             n_datapoint = 0
             try:
                 for datapoint in iter(
-                    self.sensor_collection_to_gp_collection_datapoint_queue.get_nowait,
+                    self.sensor_collection_to_rl_collection_datapoint_queue.get_nowait,
                     "STOP",
                 ):
                     n_datapoint += 1
             except BaseException:
                 pass
             self._logger.debug(
-                f"EMPTY {n_datapoint} from sensor_collection_to_gp_collection_datapoint_queue"
+                f"EMPTY {n_datapoint} from sensor_collection_to_rl_collection_datapoint_queue"
             )
 
-            # Reseting GP Collection
-            self.sensor_collection_to_gp_collection_reset_queue.put((True))
+            # Reseting RL Collection
+            self.sensor_collection_to_rl_collection_reset_queue.put((True))
 
             # Empty reset queue
             try:
-                self.sensor_collection_to_gp_training_reset_queue.get_nowait()
+                self.sensor_collection_to_rl_training_reset_queue.get_nowait()
             except BaseException:
                 pass
             self._logger.debug(
-                "EMPTY sensor_collection_to_gp_training_reset_queue and reset GPTraining"
+                "EMPTY sensor_collection_to_rl_training_reset_queue and reset RLTraining"
             )
 
-            # Reseting GP
-            self.sensor_collection_to_gp_training_reset_queue.put((True))
+            # Reseting RL
+            self.sensor_collection_to_rl_training_reset_queue.put((True))
 
     def _send_sensor(self) -> None:
         """Send sensor data to other processes."""
 
-        # Waiting for GPTraining to start to avoid continuous offset between collection and training
-        if not self.start_collection:
-            try:
-                self.gp_collection_to_sensor_collection_start_queue.get_nowait()
-                self.start_collection = True
-                self._logger.debug(
-                    "Got signal from GPCollection, starting Sensor Collection."
-                )
-            except BaseException:
-                pass
+        # Get current reading
+        sensor_tx = self.global_position[0]
+        sensor_ty = self.global_position[1]
+        sensor_tz = self.global_position[2]
+        sensor_vx = self.v[0]
+        sensor_vy = self.v[1]
+        sensor_vz = self.v[2]
 
-        else:
+        sensor_wx = self.w[0]
+        sensor_wy = self.w[1]
+        sensor_wz = self.w[2] * -1  # Warning: inverting z-axis here
 
-            # Get current reading
-            sensor_tx = self.global_position[0]
-            sensor_ty = self.global_position[1]
-            sensor_tz = self.global_position[2]
-            sensor_vx = self.v[0]
-            sensor_vy = self.v[1]
-            sensor_vz = self.v[2]
+        sensor_roll = self.euler_angles[0]
+        sensor_pitch = self.euler_angles[1]
+        sensor_yaw = self.euler_angles[2]
 
-            sensor_wx = self.w[0]
-            sensor_wy = self.w[1]
-            sensor_wz = self.w[2] * -1  # Warning: inverting z-axis here
+        # Compute state
+        state = (
+            sensor_vx,
+            sensor_vy,
+            sensor_wz,
+            sensor_tx,
+            sensor_ty,
+            sensor_yaw,
+            sensor_roll,
+            sensor_pitch,
+        )
 
-            sensor_roll = self.euler_angles[0]
-            sensor_pitch = self.euler_angles[1]
-            sensor_yaw = self.euler_angles[2]
-
-            # Compute state
-            state = (
-                sensor_vx,
-                sensor_vy,
-                sensor_wz,
+        # Send datapoint to RLCollection
+        self.sensor_collection_to_rl_collection_datapoint_queue.put(
+            (
+                self.sensor_time,
+                state,
                 sensor_tx,
                 sensor_ty,
+                sensor_tz,
+                sensor_vx,
+                sensor_vy,
+                sensor_vz,
                 sensor_yaw,
                 sensor_roll,
                 sensor_pitch,
+                sensor_wx,
+                sensor_wy,
+                sensor_wz,
             )
+        )
 
-            # Send datapoint to GPCollection
-            self.sensor_collection_to_gp_collection_datapoint_queue.put(
-                (
-                    self.sensor_time,
-                    state,
-                    sensor_tx,
-                    sensor_ty,
-                    sensor_tz,
-                    sensor_vx,
-                    sensor_vy,
-                    sensor_vz,
-                    sensor_yaw,
-                    sensor_roll,
-                    sensor_pitch,
-                    sensor_wx,
-                    sensor_wy,
-                    sensor_wz,
-                )
-            )
+        # Empty datapoint to Adaptation queue
+        try:
+            self.sensor_collection_to_adaptation_datapoint_queue.get_nowait()
+        except BaseException:
+            pass
 
-            # Empty datapoint to Adaptation queue
-            try:
-                self.sensor_collection_to_adaptation_datapoint_queue.get_nowait()
-            except BaseException:
-                pass
-
-            # Send datapoint to Adaptation
-            self.sensor_collection_to_adaptation_datapoint_queue.put(state)
+        # Send datapoint to Adaptation
+        self.sensor_collection_to_adaptation_datapoint_queue.put((state, sensor_vx, sensor_wz))
 
 
 # SensorCollection process
 def start_sensor_collection_process(
     args,
     loglevel: str,
-    sensor_collection_to_gp_collection_datapoint_queue: multiprocessing.Queue,
+    sensor_collection_to_rl_collection_datapoint_queue: multiprocessing.Queue,
     sensor_collection_to_adaptation_datapoint_queue: multiprocessing.Queue,
-    sensor_collection_to_gp_training_reset_queue: multiprocessing.Queue,
-    sensor_collection_to_gp_collection_reset_queue: multiprocessing.Queue,
-    gp_collection_to_sensor_collection_start_queue: multiprocessing.Queue,
+    sensor_collection_to_rl_training_reset_queue: multiprocessing.Queue,
+    sensor_collection_to_rl_collection_reset_queue: multiprocessing.Queue,
+    rl_collection_to_sensor_collection_start_queue: multiprocessing.Queue,
 ) -> None:
     """Process to acquire sensor information to send them for point selection."""
 
     rclpy.init(args=args)
     sensor_collection = SensorCollection(
-        sensor_collection_to_gp_collection_datapoint_queue,
+        sensor_collection_to_rl_collection_datapoint_queue,
         sensor_collection_to_adaptation_datapoint_queue,
-        sensor_collection_to_gp_training_reset_queue,
-        sensor_collection_to_gp_collection_reset_queue,
-        gp_collection_to_sensor_collection_start_queue,
+        sensor_collection_to_rl_training_reset_queue,
+        sensor_collection_to_rl_collection_reset_queue,
+        rl_collection_to_sensor_collection_start_queue,
         loglevel,
     )
     rclpy.spin(sensor_collection)
@@ -499,20 +433,20 @@ def start_sensor_collection_process(
 
 
 #########################
-# GP Collection process #
+# RL Collection process #
 
 
-def start_gp_collection_process(
+def start_rl_collection_process(
     args,
     loglevel: str,
-    adaptation_to_gp_collection_command_queue: multiprocessing.Queue,
-    sensor_collection_to_gp_collection_datapoint_queue: multiprocessing.Queue,
-    gp_collection_to_gp_training_datapoint_queue: multiprocessing.Queue,
-    gp_training_to_gp_collection_start_queue: multiprocessing.Queue,
-    gp_collection_to_sensor_collection_start_queue: multiprocessing.Queue,
-    sensor_collection_to_gp_collection_reset_queue: multiprocessing.Queue,
+    adaptation_to_rl_collection_command_queue: multiprocessing.Queue,
+    sensor_collection_to_rl_collection_datapoint_queue: multiprocessing.Queue,
+    rl_collection_to_rl_training_datapoint_queue: multiprocessing.Queue,
+    rl_training_to_rl_collection_start_queue: multiprocessing.Queue,
+    rl_collection_to_sensor_collection_start_queue: multiprocessing.Queue,
+    sensor_collection_to_rl_collection_reset_queue: multiprocessing.Queue,
 ) -> None:
-    """Process for the GP Data Collection."""
+    """Process for the RL Data Collection."""
 
     # Import inside process to reduce memory usage
     import os
@@ -525,8 +459,8 @@ def start_gp_collection_process(
     influx_client = init_influx()
 
     # Set up logging
-    logger = define_logger("GPCollection", loglevel, "\x1b[31;20m GP_COLLECTION")
-    logger.info("GPCollection: Starting")
+    logger = define_logger("RLCollection", loglevel, "\x1b[31;20m RL_COLLECTION")
+    logger.info("RLCollection: Starting")
 
     # Create the DataCollection object
     data_collection = DataCollection(
@@ -557,7 +491,7 @@ def start_gp_collection_process(
     try:
         writeEntry(
             influx_client,
-            "/gp_collection_configuration",
+            "/l1_collection_configuration",
             [
                 ("Filter_transition", FILTER_TRANSITION),
                 ("Filter_varying_angle", FILTER_VARYING_ANGLE),
@@ -579,34 +513,34 @@ def start_gp_collection_process(
         logger.warning("Warning: Influx sending failed.")
         logger.warning(e)
 
-    # Waiting for GPTraining to start to avoid continuous offset between collection and training
-    logger.info("GPCollection: Completed __init__, waiting for GPTraining to start.")
-    gp_training_to_gp_collection_start_queue.get()
-    logger.debug("GPTraining has started, waiting for commands to start collection.")
+    # Waiting for RLTraining to start to avoid continuous offset between collection and training
+    #logger.info("RLCollection: Completed __init__, waiting for RLTraining to start.")
+    #rl_training_to_rl_collection_start_queue.get()
+    #logger.debug("RLTraining has started, waiting for commands to start collection.")
 
     # Waiting for the first command to avoid stacking sensor datapoints that do not match any command
     (
         command_x,
         command_y,
-        gp_prediction_x,
-        gp_prediction_y,
+        rl_prediction_x,
+        rl_prediction_y,
         intent_x,
         intent_y,
-    ) = adaptation_to_gp_collection_command_queue.get()
+    ) = adaptation_to_rl_collection_command_queue.get()
     sensor_vx = None
     sensor_wz = None
     next_command_x = None
 
     # When got the first command, trigger sensor collection
     logger.debug("Got the first command, triggering Sensor Collection.")
-    gp_collection_to_sensor_collection_start_queue.put((True))
-    logger.debug("Starting GPCollection.")
+    rl_collection_to_sensor_collection_start_queue.put((True))
+    logger.debug("Starting RLCollection.")
 
     # Main loop
     while True:
 
         # Get a datapoint from Sensor Collection
-        sensor_datapoint = sensor_collection_to_gp_collection_datapoint_queue.get()
+        sensor_datapoint = sensor_collection_to_rl_collection_datapoint_queue.get()
         if sensor_vx is None:
             sensor_time = np.array([[sensor_datapoint[0]]])
             state = np.array([sensor_datapoint[1]])
@@ -646,7 +580,7 @@ def start_gp_collection_process(
         start_t = time.time()
         try:
             for sensor_datapoint in iter(
-                sensor_collection_to_gp_collection_datapoint_queue.get_nowait, "STOP"
+                sensor_collection_to_rl_collection_datapoint_queue.get_nowait, "STOP"
             ):
 
                 # start_add = time.time()
@@ -684,7 +618,7 @@ def start_gp_collection_process(
                 timestamp = int(timestamp.sec) * int(1e9) + int(timestamp.nanosec)
                 writeEntry(
                     influx_client,
-                    "/sensor",
+                    "/l1_sensor",
                     [
                         ("time", timestamp),
                         ("tx", sensor_tx[n_sensor_datapoints, 0]),
@@ -711,11 +645,11 @@ def start_gp_collection_process(
             (
                 next_command_x,
                 next_command_y,
-                next_gp_prediction_x,
-                next_gp_prediction_y,
+                next_rl_prediction_x,
+                next_rl_prediction_y,
                 next_intent_x,
                 next_intent_y,
-            ) = adaptation_to_gp_collection_command_queue.get_nowait()
+            ) = adaptation_to_rl_collection_command_queue.get_nowait()
 
         except BaseException as e:
             pass
@@ -732,18 +666,18 @@ def start_gp_collection_process(
             (
                 command_x,
                 command_y,
-                gp_prediction_x,
-                gp_prediction_y,
+                rl_prediction_x,
+                rl_prediction_y,
                 intent_x,
                 intent_y,
-            ) = adaptation_to_gp_collection_command_queue.get()
+            ) = adaptation_to_rl_collection_command_queue.get()
 
             # Empty datapoint queue
             logger.debug("Got a new command, emptying Sensor Collection queue.")
             n_datapoint = 0
             try:
                 for datapoint in iter(
-                    self.sensor_collection_to_gp_collection_datapoint_queue.get_nowait,
+                    self.sensor_collection_to_rl_collection_datapoint_queue.get_nowait,
                     "STOP",
                 ):
                     n_datapoint += 1
@@ -753,8 +687,8 @@ def start_gp_collection_process(
 
         # Attempt to get reset signal from Sensor Collection process
         try:
-            _ = sensor_collection_to_gp_collection_reset_queue.get_nowait()
-            logger.debug("RESETING GP Collection" * 20)
+            _ = sensor_collection_to_rl_collection_reset_queue.get_nowait()
+            logger.debug("RESETING RL Collection" * 20)
 
             # Reset Data Collection
             data_collection.reset()
@@ -765,8 +699,8 @@ def start_gp_collection_process(
 
             command_x = next_command_x
             command_y = next_command_y
-            gp_prediction_x = next_gp_prediction_x
-            gp_prediction_y = next_gp_prediction_y
+            rl_prediction_x = next_rl_prediction_x
+            rl_prediction_y = next_rl_prediction_y
             intent_x = next_intent_x
             intent_y = next_intent_y
             next_command_x = None
@@ -776,13 +710,13 @@ def start_gp_collection_process(
             n_datapoint = 0
             try:
                 for datapoint in iter(
-                    gp_collection_to_gp_training_datapoint_queue.get_nowait, "STOP"
+                    rl_collection_to_rl_training_datapoint_queue.get_nowait, "STOP"
                 ):
                     n_datapoint += 1
             except BaseException:
                 pass
             logger.debug(
-                f"EMPTY {n_datapoint} from gp_collection_to_gp_training_datapoint_queue"
+                f"EMPTY {n_datapoint} from rl_collection_to_rl_training_datapoint_queue"
             )
 
         except BaseException:
@@ -803,8 +737,8 @@ def start_gp_collection_process(
                     state=state,
                     command_x=command_x,
                     command_y=command_y,
-                    gp_prediction_x=gp_prediction_x,
-                    gp_prediction_y=gp_prediction_y,
+                    gp_prediction_x=rl_prediction_x,
+                    gp_prediction_y=rl_prediction_y,
                     intent_x=intent_x,
                     intent_y=intent_y,
                     sensor_time=sensor_time,
@@ -827,7 +761,7 @@ def start_gp_collection_process(
             # Send to Influx
             try:
                 writeEntry(
-                    influx_client, "/gp_datapoint_filter", [("filter_code", error_code)]
+                    influx_client, "/l1_datapoint_filter", [("filter_code", error_code)]
                 )
             except BaseException as e:
                 logger.warning("Warning: Influx sending failed.")
@@ -840,8 +774,8 @@ def start_gp_collection_process(
             # Store next commands
             command_x = next_command_x
             command_y = next_command_y
-            gp_prediction_x = next_gp_prediction_x
-            gp_prediction_y = next_gp_prediction_y
+            rl_prediction_x = next_rl_prediction_x
+            rl_prediction_y = next_rl_prediction_y
             intent_x = next_intent_x
             intent_y = next_intent_y
 
@@ -849,12 +783,12 @@ def start_gp_collection_process(
             next_command_x = None
             sensor_vx = None
 
-            # If Data Collection returned a datapoint, send it to the GP
+            # If Data Collection returned a datapoint, send it to the RL
             if final_datapoint is not None:
 
-                # Send to GPTraining
-                # logger.debug(f"Sending 1 datapoint to GP Training.")
-                gp_collection_to_gp_training_datapoint_queue.put(final_datapoint)
+                # Send to RLTraining
+                # logger.debug(f"Sending 1 datapoint to RL Training.")
+                rl_collection_to_rl_training_datapoint_queue.put(final_datapoint)
                 datapoints_number += 1
 
                 # Send to Influx
@@ -862,7 +796,7 @@ def start_gp_collection_process(
                     influx_msgs = final_datapoints_msg
                     writeEntry(
                         influx_client,
-                        "/gp_datapoint",
+                        "/l1_datapoint",
                         influx_msgs,
                         timestamp=int(final_datapoint[1]) * int(1e9)
                         + int(final_datapoint[2]),
@@ -872,12 +806,12 @@ def start_gp_collection_process(
                     logger.warning(e)
 
             # If Data Collection returned metrics for Influx, send them to Influx
-            if DEBUG_GP_COLLECTION:
+            if DEBUG_RL_COLLECTION:
                 if metrics is not None:
                     try:
                         writeEntry(
                             influx_client,
-                            "/gp_datapoint_analysis",
+                            "/l1_datapoint_analysis",
                             [("DataCollection", metrics)],
                         )
                     except BaseException as e:
@@ -886,21 +820,21 @@ def start_gp_collection_process(
 
 
 #######################
-# GP training process #
+# RL training process #
 
-# GPtraining process
-def start_gp_training_process(
+# RLtraining process
+def start_rl_training_process(
     loglevel: str,
-    gp_training_to_adaptation_model_queue: multiprocessing.Queue,
-    gp_collection_to_gp_training_datapoint_queue: multiprocessing.Queue,
-    gp_training_to_gp_collection_start_queue: multiprocessing.Queue,
-    gp_training_to_adaptation_start_queue: multiprocessing.Queue,
-    sensor_collection_to_gp_training_reset_queue: multiprocessing.Queue,
+    rl_training_to_adaptation_model_queue: multiprocessing.Queue,
+    rl_collection_to_rl_training_datapoint_queue: multiprocessing.Queue,
+    rl_training_to_rl_collection_start_queue: multiprocessing.Queue,
+    rl_training_to_adaptation_start_queue: multiprocessing.Queue,
+    sensor_collection_to_rl_training_reset_queue: multiprocessing.Queue,
 ) -> None:
-    """Thread for the GP Training."""
+    """Thread for the RL Training."""
 
     # Create a logger
-    logger = define_logger("GPTraining", loglevel, "\x1b[32;20m TRAINER ")
+    logger = define_logger("RLTraining", loglevel, "\x1b[32;20m TRAINER ")
     # logging.basicConfig(level=logging.DEBUG)
 
     # Import inside process to reduce memory usage
@@ -938,168 +872,78 @@ def start_gp_training_process(
         sensor_y=0.0,
     )
 
-    # Create GP
-    logger.info("GPTraining: Starting")
+    # Create RL
+    logger.info("RLTraining: Starting")
 
-    if ADAPTATION_VERSION == NO_STATE_FAST:
+    from functionality_controller.residual_rl_td3 import ResidualTD3
 
-        logger.warning("IMPORT: importing from adaptive_gp_no_state_fast")
-        from functionality_controller.adaptive_gp_no_state_fast import AdaptiveGP
-
-        adaptive_gp = AdaptiveGP(
-            logger=logger,
-            jiting_datapoints=jiting_datapoints,
-            grid_resolution=GRID_RESOLUTION,
-            min_command=MIN_COMMAND,
-            max_command=MAX_COMMAND,
-            robot_width=ROBOT_WIDTH,
-            default_obs_noise=DEFAULT_OBS_NOISE,
-            default_lengthscale=DEFAULT_LENGTHSCALE,
-            default_variance=DEFAULT_VARIANCE,
-            min_diff_datapoint=MIN_DIFF_DATAPOINT,
-            use_grid_dataset=USE_GRID_DATASET,
-            dataset_size=DATASET_SIZE,
-            dataset_grid_cell_size=DATASET_GRID_CELL_SIZE,
-            dataset_grid_neighbours=DATASET_GRID_NEIGH,
-            dataset_grid_novelty_threshold=DATASET_GRID_NOVELTY_THRESHOLD,
-            datapoint_batch_size=DATAPOINT_BATCH_SIZE,
-            max_p_value=MAX_P_VALUE,
-            p_soft_update_size=P_SOFT_UPDATE_SIZE,
-            min_spread=MIN_SPREAD,
-            minibatch_size=MINIBATCH_SIZE,
-            auto_reset_error_buffer_size=ERROR_BUFFER_SIZE,
-            auto_reset_angular_rot_weight=WEIGHT_ANGULAR_ROT,
-            auto_reset_threshold=NEW_SCENARIO_THRESHOLD,
-        )
-
-    elif ADAPTATION_VERSION == STATE_FAST or ADAPTATION_VERSION == STATE_FAST_GP:
-
-        logger.warning("IMPORT: importing from adaptive_gp_state_fast")
-        logger.warning(f"Using state dimension {STATE_DIM}")
-        from functionality_controller.adaptive_gp_state_fast import AdaptiveGP
-
-        adaptive_gp = AdaptiveGP(
-            logger=logger,
-            jiting_datapoints=jiting_datapoints,
-            grid_resolution=GRID_RESOLUTION,
-            min_command=MIN_COMMAND,
-            max_command=MAX_COMMAND,
-            robot_width=ROBOT_WIDTH,
-            default_obs_noise=DEFAULT_OBS_NOISE,
-            default_lengthscale=DEFAULT_LENGTHSCALE,
-            default_variance=DEFAULT_VARIANCE,
-            min_diff_datapoint=MIN_DIFF_DATAPOINT,
-            use_grid_dataset=USE_GRID_DATASET,
-            dataset_size=DATASET_SIZE,
-            dataset_grid_cell_size=DATASET_GRID_CELL_SIZE,
-            dataset_grid_neighbours=DATASET_GRID_NEIGH,
-            dataset_grid_novelty_threshold=DATASET_GRID_NOVELTY_THRESHOLD,
-            datapoint_batch_size=DATAPOINT_BATCH_SIZE,
-            max_p_value=MAX_P_VALUE,
-            multi_function=MULTI_FUNCTON,
-            remove_offset=REMOVE_OFFSET,
-            state_dim=STATE_DIM,
-            state_min_dataset=STATE_MIN_DATASET,
-            state_max_dataset=STATE_MAX_DATASET,
-            state_min_opt_clip=STATE_MIN_OPT_CLIP,
-            state_max_opt_clip=STATE_MAX_OPT_CLIP,
-            p1_min=P1_MIN,
-            p1_max=P1_MAX,
-            p2_min=P2_MIN,
-            p2_max=P2_MAX,
-            p3_min=P3_MIN,
-            p3_max=P3_MAX,
-            minibatch_size=MINIBATCH_SIZE,
-            auto_reset_error_buffer_size=ERROR_BUFFER_SIZE,
-            auto_reset_angular_rot_weight=WEIGHT_ANGULAR_ROT,
-            auto_reset_threshold=NEW_SCENARIO_THRESHOLD,
-        )
-
-    else:
-        assert 0, "ERROR: unknown Adaptation version"
-
-    # Attributes used to compute clipping
-    # border_idx = compute_borders(deepcopy(adaptive_gp.all_descriptors))
-    border_idx = compute_borders(adaptive_gp.all_descriptors)
-
-    # Attributes used for sending to influx
-    x_axis = np.linspace(MIN_COMMAND, MAX_COMMAND, num=GRID_RESOLUTION)
-    all_descriptors = np.asarray(np.meshgrid(x_axis, x_axis)).T.reshape(-1, 2)
-    all_genotypes = np.concatenate(
-        [
-            all_descriptors,
-            np.full(shape=(all_descriptors.shape[0], 1), fill_value=1),
-        ],
-        axis=-1,
+    residual_td3 = ResidualTD3(
+        logger=logger,
+        jiting_datapoints=jiting_datapoints,
+        min_command=MIN_COMMAND, 
+        max_command=MAX_COMMAND,
+        learning_rate=LEARNING_RATE,
+        policy_noise=POLICY_NOISE,
+        noise_clip=NOISE_CLIP,
+        gamma=GAMMA,
+        tau=TAU,
+        batch_size=BATCH_SIZE,
+        policy_frequency=POLICY_FREQUENCY,
+        min_diff_datapoint=MIN_DIFF_DATAPOINT,
+        dataset_size=DATASET_SIZE,
+        datapoint_batch_size=DATAPOINT_BATCH_SIZE,
+        minibatch_size=MINIBATCH_SIZE,
+        auto_reset_error_buffer_size=ERROR_BUFFER_SIZE,
+        auto_reset_angular_rot_weight=WEIGHT_ANGULAR_ROT,
+        auto_reset_threshold=NEW_SCENARIO_THRESHOLD,
     )
 
     # Define a reset function used multiple time within the loop
-    def GPTraining_reset(adaptive_gp: AdaptiveGP, auto_reset: bool) -> None:
-        """Function called for any reset of the GP."""
+    def RLTraining_reset(residual_td3: ResidualTD3, auto_reset: bool) -> None:
+        """Function called for any reset of the RL."""
 
         # Empty model queue
         try:
-            gp_training_to_adaptation_model_queue.get_nowait()
+            rl_training_to_adaptation_model_queue.get_nowait()
         except BaseException:
             pass
-        logger.debug("EMPTY model from gp_training_to_adaptation_model_queue")
+        logger.debug("EMPTY model from rl_training_to_adaptation_model_queue")
 
         # Send new reseted model to Adaptation
-        gp_training_to_adaptation_model_queue.put(
+        rl_training_to_adaptation_model_queue.put(
             (
-                adaptive_gp.all_descriptors,
-                adaptive_gp.uncertainties,
-                adaptive_gp.default_rotation,
-                adaptive_gp.default_offset,
-                MAX_COMMAND,
-                MAX_COMMAND,
-                None,
-                adaptive_gp.kernel_x,
+                residual_td3.actor_state.params,
             )
         )
 
         # Empty reset queue
         try:
             for reset in iter(
-                sensor_collection_to_gp_training_reset_queue.get_nowait, "STOP"
+                sensor_collection_to_rl_training_reset_queue.get_nowait, "STOP"
             ):
                 num_train_counter = 0
         except BaseException:
             pass
-        logger.debug("EMPTY reset from sensor_collection_to_gp_training_reset_queue")
+        logger.debug("EMPTY reset from sensor_collection_to_rl_training_reset_queue")
 
         # Empty datapoint queue
         n_datapoint = 0
         try:
             for datapoint in iter(
-                gp_collection_to_gp_training_datapoint_queue.get_nowait, "STOP"
+                rl_collection_to_rl_training_datapoint_queue.get_nowait, "STOP"
             ):
                 n_datapoint += 1
         except BaseException:
             pass
         logger.debug(
-            f"EMPTY {n_datapoint} from gp_collection_to_gp_training_datapoint_queue"
-        )
-
-        # Send empty model to influx
-        send_map(
-            influx_client=influx_client,
-            logger=logger,
-            metric_map=compute_metric_map(
-                adaptive_gp.all_corrected_descriptors,
-                adaptive_gp.uncertainties,
-            ),
-            genotypes=all_genotypes,
-            learned_params=adaptive_gp.xy_learned_params["mean_function"]["rotation"],
-            max_x=MAX_COMMAND,
-            max_y=MAX_COMMAND,
+            f"EMPTY {n_datapoint} from rl_collection_to_rl_training_datapoint_queue"
         )
 
         # Send reset to influx
         try:
             writeEntry(
                 influx_client,
-                "/gp_reset",
+                "/l1_reset",
                 [("reset", not (auto_reset)), ("auto_reset", auto_reset)],
             )
         except BaseException as e:
@@ -1107,46 +951,27 @@ def start_gp_training_process(
             logger.warning(e)
 
     # Reset everything
-    GPTraining_reset(adaptive_gp, auto_reset=False)
-    gp_map_sending_counter = 0
+    RLTraining_reset(residual_td3, auto_reset=False)
+    rl_map_sending_counter = 0
 
-    # Send GPTraining configuration to Influx
+    # Send RLTraining configuration to Influx
     try:
         writeEntry(
             influx_client,
-            "/gp_training_configuration",
+            "/l1_training_configuration",
             [
-                ("Version", ADAPTATION_VERSION),
                 ("Use_reset", USE_RESET),
-                ("GP_obs_noise", str(DEFAULT_OBS_NOISE)),
-                ("GP_variance", str(DEFAULT_VARIANCE)),
-                ("GP_lengthscale", str(DEFAULT_LENGTHSCALE)),
-                ("Grid_resolution", GRID_RESOLUTION),
-                ("Min_command", MIN_COMMAND),
-                ("Max_command", MAX_COMMAND),
+                ("Learning_rate", LEARNING_RATE),
+                ("Policy_noise", POLICY_NOISE),
+                ("Noise_clip", NOISE_CLIP),
+                ("Gamma", GAMMA),
+                ("Tau", TAU),
+                ("Batch_size", BATCH_SIZE),
+                ("Poliy_frequency", POLICY_FREQUENCY),
+                ("Observation_state", OBSERVATION_STATE),
                 ("Dataset_min_diff", MIN_DIFF_DATAPOINT),
                 ("Dataset_batch_size", DATAPOINT_BATCH_SIZE),
-                ("Dataset_use_grid", USE_GRID_DATASET),
                 ("Dataset_size", DATASET_SIZE),
-                ("Dataset_grid_cell_size", DATASET_GRID_CELL_SIZE),
-                ("Dataset_grid_neigh", DATASET_GRID_NEIGH),
-                ("Dataset_grid_novelty_threshold", DATASET_GRID_NOVELTY_THRESHOLD),
-                ("Max_p_value", MAX_P_VALUE),
-                ("p_soft_update", P_SOFT_UPDATE_SIZE),
-                ("Min_spread", MIN_SPREAD),
-                ("State_multi_function", MULTI_FUNCTON),
-                ("State_remove_offset", REMOVE_OFFSET),
-                ("State_dim", STATE_DIM),
-                ("State_min_dataset", STATE_MIN_DATASET),
-                ("State_max_dataset", STATE_MAX_DATASET),
-                ("State_min_opt_clip", STATE_MIN_OPT_CLIP),
-                ("State_max_opt_clip", STATE_MAX_OPT_CLIP),
-                ("State_p1_min", P1_MIN),
-                ("State_p1_max", P1_MAX),
-                ("State_p2_min", P2_MIN),
-                ("State_p2_max", P2_MAX),
-                ("State_p3_min", P3_MIN),
-                ("State_p3_max", P3_MAX),
                 ("Reset_minibatch_size", MINIBATCH_SIZE),
                 ("Reset_error_buffer_size", ERROR_BUFFER_SIZE),
                 ("Reset_weight_angular_rot", WEIGHT_ANGULAR_ROT),
@@ -1160,14 +985,14 @@ def start_gp_training_process(
     # Trigger the Data Collectiona and Adaptation only when fully started
     # to avoid accumulating datapoints and the robot moving because of damage before adaptation
     logger.debug("Model booted, triggering Data Collection and Adaptation")
-    gp_training_to_gp_collection_start_queue.put((True))
-    gp_training_to_adaptation_start_queue.put((True))
+    rl_training_to_rl_collection_start_queue.put((True))
+    rl_training_to_adaptation_start_queue.put((True))
 
-    logger.info("GPTraining: Completed __init__")
+    logger.info("RLTraining: Completed __init__")
 
     while True:
 
-        # Wait until we get a datapoint from GPCollection
+        # Wait until we get a datapoint from RLCollection
         start_t = time.time()
         (
             point_id,
@@ -1175,8 +1000,8 @@ def start_gp_training_process(
             sensor_time_nanosec,
             command_time_sec,
             command_time_nanosec,
-            gp_prediction_x,
-            gp_prediction_y,
+            rl_prediction_x,
+            rl_prediction_y,
             command_x,
             command_y,
             intent_x,
@@ -1185,7 +1010,7 @@ def start_gp_training_process(
             sensor_y,
             _,
             state,
-        ) = gp_collection_to_gp_training_datapoint_queue.get()
+        ) = rl_collection_to_rl_training_datapoint_queue.get()
         datapoints = DataPoints.add(
             datapoint=empty_datapoints,
             point_id=point_id,
@@ -1194,8 +1019,8 @@ def start_gp_training_process(
             command_time_sec=command_time_sec,
             command_time_nanosec=command_time_nanosec,
             state=state,
-            gp_prediction_x=gp_prediction_x,
-            gp_prediction_y=gp_prediction_y,
+            gp_prediction_x=rl_prediction_x,
+            gp_prediction_y=rl_prediction_y,
             command_x=command_x,
             command_y=command_y,
             intent_x=intent_x,
@@ -1211,14 +1036,14 @@ def start_gp_training_process(
         send_map_time = 0.0
         updated = False
 
-        # Attempt to get reset signal from GP collection process
+        # Attempt to get reset signal from RL collection process
         try:
-            _ = sensor_collection_to_gp_training_reset_queue.get_nowait()
+            _ = sensor_collection_to_rl_training_reset_queue.get_nowait()
 
-            logger.debug("RESETING GP Training " * 20)
+            logger.debug("RESETING RL Training " * 20)
             start_t = time.time()
-            adaptive_gp.reset()
-            GPTraining_reset(adaptive_gp, auto_reset=False)
+            residual_td3.reset()
+            RLTraining_reset(residual_td3, auto_reset=False)
             reset_time = time.time() - start_t
             # logger.debug(f"Time to reset: {time.time() - start_t}")
 
@@ -1230,7 +1055,7 @@ def start_gp_training_process(
         n_datapoint = 1
         try:
             for datapoint in iter(
-                gp_collection_to_gp_training_datapoint_queue.get_nowait, "STOP"
+                rl_collection_to_rl_training_datapoint_queue.get_nowait, "STOP"
             ):
                 (
                     point_id,
@@ -1238,8 +1063,8 @@ def start_gp_training_process(
                     sensor_time_nanosec,
                     command_time_sec,
                     command_time_nanosec,
-                    gp_prediction_x,
-                    gp_prediction_y,
+                    rl_prediction_x,
+                    rl_prediction_y,
                     command_x,
                     command_y,
                     intent_x,
@@ -1257,8 +1082,8 @@ def start_gp_training_process(
                     command_time_sec=command_time_sec,
                     command_time_nanosec=command_time_nanosec,
                     state=state,
-                    gp_prediction_x=gp_prediction_x,
-                    gp_prediction_y=gp_prediction_y,
+                    gp_prediction_x=rl_prediction_x,
+                    gp_prediction_y=rl_prediction_y,
                     command_x=command_x,
                     command_y=command_y,
                     intent_x=intent_x,
@@ -1277,7 +1102,7 @@ def start_gp_training_process(
 
         # Add all datapoints to the dataset
         start_t = time.time()
-        adaptive_gp.update(datapoints)
+        residual_td3.update(datapoints)
         dataset_addition_time = time.time() - start_t
         # logger.debug(f"Time to update dataset: {dataset_addition_time}")
 
@@ -1285,14 +1110,14 @@ def start_gp_training_process(
         start_t = time.time()
         if USE_RESET:
 
-            # Run the GP ME insertion check
-            auto_reset, error_increase, error = adaptive_gp.auto_reset()
+            # Run the RL ME insertion check
+            auto_reset, error_increase, error = residual_td3.auto_reset()
 
             # Send the force reset to influx
             try:
                 writeEntry(
                     influx_client,
-                    "/gp_auto_reset",
+                    "/l1_auto_reset",
                     [
                         ("auto_reset", int(auto_reset)),
                         ("current_error", error),
@@ -1305,26 +1130,26 @@ def start_gp_training_process(
 
             # Force the reset of the other processes
             if auto_reset:
-                GPTraining_reset(adaptive_gp, auto_reset=True)
+                RLTraining_reset(residual_td3, auto_reset=True)
 
         self_reset_time = time.time() - start_t
         # logger.debug(f"Time to self reset: {self_reset_time}")
 
-        # Train the GP
+        # Train the RL
         start_t = time.time()
-        updated, opt_time, gp_fit_time = adaptive_gp.gp_update()
+        # updated = residual_td3.rl_update()
         train_time = time.time() - start_t
         # logger.debug(f"Time to train gp: {train_time}")
 
-        # Get reset signal from GP collection process again, to avoid
+        # Get reset signal from RL collection process again, to avoid
         # sending a new model to Adaptation if reseting
         try:
-            _ = sensor_collection_to_gp_training_reset_queue.get_nowait()
+            _ = sensor_collection_to_rl_training_reset_queue.get_nowait()
 
             start_t = time.time()
-            logger.debug("RESETING GP Training " * 20)
-            adaptive_gp.reset()
-            GPTraining_reset(adaptive_gp, auto_reset=False)
+            logger.debug("RESETING RL Training " * 20)
+            residual_td3.reset()
+            RLTraining_reset(residual_td3, auto_reset=False)
             updated = False
             reset_time += time.time() - start_t
             # logger.debug(f"Time to reset: {time.time() - start_t}")
@@ -1335,138 +1160,61 @@ def start_gp_training_process(
         # If the model has been updated, send to Adaptation and Influx
         if updated:
 
-            # Computing the new clipping
-            start_t = time.time()
-            # max_x, max_y = compute_clipping(border_idx, deepcopy(adaptive_gp.all_corrected_descriptors))
-            max_x, max_y = compute_clipping(
-                border_idx, adaptive_gp.all_corrected_descriptors
-            )
-
             # Empty model queue
+            start_t = time.time()
             try:
-                gp_training_to_adaptation_model_queue.get_nowait()
+                rl_training_to_adaptation_model_queue.get_nowait()
             except BaseException:
                 pass
 
-            # Sending model to GP
-            if ADAPTATION_VERSION == STATE_FAST_GP:
-                send_dataset_state = adaptive_gp.dataset.state
-            else:
-                send_dataset_state = None
-            gp_training_to_adaptation_model_queue.put(
+            # Sending model to RL
+            rl_training_to_adaptation_model_queue.put(
                 (
-                    adaptive_gp.all_corrected_descriptors,
-                    adaptive_gp.uncertainties,
-                    adaptive_gp.xy_learned_params["mean_function"]["rotation"],
-                    adaptive_gp.xy_learned_params["mean_function"]["offset"],
-                    max_x,
-                    max_y,
-                    send_dataset_state,
-                    adaptive_gp.kernel_x,
+                    residual_td3.actor_state.params,
                 )
             )
             send_map_time = time.time() - start_t
 
-            # Sending introspection to Influx
-            try:
-                learned_params = adaptive_gp.xy_learned_params["mean_function"][
-                    "rotation"
-                ]
-                writeEntry(
-                    influx_client,
-                    "/gp_damage_introspection",
-                    [
-                        ("p1", float(learned_params[0])),
-                        ("p2", float(learned_params[1])),
-                    ],
-                )
-            except BaseException as e:
-                logger.warning("Warning: Influx sending failed.")
-                logger.warning(e)
-
-            # send learnt functions and offset introspection for STATE version to influx
-            if ADAPTATION_VERSION == STATE_FAST or ADAPTATION_VERSION == STATE_FAST_GP:
-                try:
-                    writeEntry(influx_client, "/learnt_state_functions", 
-                    [
-                    ('a', adaptive_gp.xy_learned_params['mean_function']['rotation'][2]),
-                    ('b', adaptive_gp.xy_learned_params['mean_function']['rotation'][3]),
-                    ('c', adaptive_gp.xy_learned_params['mean_function']['rotation'][4]), 
-                    ('d', adaptive_gp.xy_learned_params['mean_function']['rotation'][5]),
-                    ('offset', adaptive_gp.xy_learned_params['mean_function']['rotation'][6])
-                    ]
-                    )
-                except BaseException as e:
-                    logger.warning("Warning: Influx sending failed.")
-                    logger.warning(e)
-
-            # Only send to Influx every GP_MAP_FREQUENCY
-            if gp_map_sending_counter > GP_MAP_FREQUENCY:
+            # Only send to Influx every RL_MAP_FREQUENCY
+            if rl_map_sending_counter > RL_MAP_FREQUENCY:
 
                 # Sending dataset to Influx
                 start_t = time.time()
                 try:
                     writeEntry(
                         influx_client,
-                        "/gp_datasets",
-                        [("dataset", adaptive_gp.dataset.to_string())],
+                        "/l1_datasets",
+                        [("dataset", residual_td3.dataset.to_string())],
                     )
-                    if USE_GRID_DATASET:
-                        writeEntry(
-                            influx_client,
-                            "/gp_grid_datasets",
-                            [("dataset", adaptive_gp.dataset.grid_to_string())],
-                        )
-                        do_nothing = 0
                 except BaseException as e:
                     logger.warning("Warning: Influx sending failed.")
                     logger.warning(e)
                 # logger.debug(f"Time to send Dataset to Influx: {time.time() - start_t}")
 
-                # Sending model to Influx
-                start_t = time.time()
-                send_map(
-                    influx_client=influx_client,
-                    logger=logger,
-                    metric_map=compute_metric_map(
-                        adaptive_gp.all_corrected_descriptors,
-                        adaptive_gp.uncertainties,
-                    ),
-                    genotypes=all_genotypes,
-                    learned_params=adaptive_gp.xy_learned_params["mean_function"][
-                        "rotation"
-                    ],
-                    max_x=max_x,
-                    max_y=max_y,
-                )
-                # logger.debug(f"Time to send model to Influx: {time.time() - start_t}")
-
                 # Reseting counter
-                gp_map_sending_counter = 0
+                rl_map_sending_counter = 0
 
         # Update loop metrics
         loop_time = time.time() - start_loop_t
-        gp_map_sending_counter += 1
+        rl_map_sending_counter += 1
 
         # Send metrics to Influx
-        if DEBUG_GP_TRAINING:
+        if DEBUG_RL_TRAINING:
             start_t = time.time()
             fields = [
-                ("gp_num_datapoints", adaptive_gp.N),
-                ("gp_num_minibatch_datapoints", adaptive_gp.minibatch_N),
+                ("rl_num_datapoints", residual_td3.N),
+                ("rl_num_minibatch_datapoints", residual_td3.minibatch_N),
                 ("num_datapoints_queue", num_datapoints_queue),
                 ("total_loop_time", loop_time),
                 ("reset_time", reset_time),
                 ("empty_queue_time", empty_queue_time),
                 ("dataset_addition_time", dataset_addition_time),
                 ("self_reset_time", self_reset_time),
-                ("gp_train_time", train_time),
-                ("gp_optimisation_time", opt_time),
-                ("gp_fit_time", gp_fit_time),
+                ("rl_train_time", train_time),
                 ("send_map_time", send_map_time),
             ]
             try:
-                writeEntry(influx_client, "/gp_debug_timing", fields)
+                writeEntry(influx_client, "/l1_debug_timing", fields)
             except BaseException as e:
                 logger.warning("Warning: Influx sending failed.")
                 logger.warning(e)
@@ -1480,10 +1228,8 @@ def start_gp_training_process(
 class Adaptation(Node):
     def __init__(
         self,
-        gp_training_to_adaptation_model_queue: multiprocessing.Queue,
         sensor_collection_to_adaptation_datapoint_queue: multiprocessing.Queue,
-        adaptation_to_gp_collection_command_queue: multiprocessing.Queue,
-        gp_training_to_adaptation_start_queue: multiprocessing.Queue,
+        adaptation_to_rl_collection_command_queue: multiprocessing.Queue,
         loglevel: str = "INFO",
     ) -> None:
         super().__init__("Adaptation")
@@ -1503,24 +1249,19 @@ class Adaptation(Node):
         # os.environ['JAX_PLATFORMS']='cpu'
         from threading import Thread
 
-        from functionality_controller.functionality_controller import (
-            FunctionalityController,
+        from functionality_controller.functionality_controller_l1 import (
+            FunctionalityControllerL1,
         )
         from src.flair.flair.perturbation import PerturbationTransform
 
         # Queues to communicate with other processes
-        self.adaptation_to_gp_collection_command_queue = (
-            adaptation_to_gp_collection_command_queue
-        )
-        self.gp_training_to_adaptation_model_queue = (
-            gp_training_to_adaptation_model_queue
+        self.adaptation_to_rl_collection_command_queue = (
+            adaptation_to_rl_collection_command_queue
         )
         self.sensor_collection_to_adaptation_datapoint_queue = (
             sensor_collection_to_adaptation_datapoint_queue
         )
-        self.gp_training_to_adaptation_start_queue = (
-            gp_training_to_adaptation_start_queue
-        )
+
         self.start_adaptation = False
 
         # Publish our requested movement
@@ -1563,19 +1304,13 @@ class Adaptation(Node):
         self.adaptation_off = True  # False
 
         # Init Adaptation
-        self._adaptation = FunctionalityController(
-            grid_resolution=GRID_RESOLUTION,
-            min_command=MIN_COMMAND,
+        self._adaptation = FunctionalityControllerL1(
+            min_command=MIN_COMMAND, 
             max_command=MAX_COMMAND,
-            state_dim=STATE_DIM,
-            state_min_opt_clip=STATE_MIN_OPT_CLIP,
-            state_max_opt_clip=STATE_MAX_OPT_CLIP,
-            robot_width=ROBOT_WIDTH,
-            max_p_value=MAX_P_VALUE,
         )
-        self._scales = [(1.0, 1.0), (0.6, 1.0), (1.0, 0.8)]
-        self._scale_id = 0
         self.state = None
+        self.sensor_x = None
+        self.sensor_y = None
 
         # Init Perturbation transform
         perturbation_logger = define_logger(
@@ -1589,28 +1324,14 @@ class Adaptation(Node):
         )
 
         # Pre-jit main functions of Adaptation
-        _, _, _, _, _, _, _, = self._adaptation.get_command(
+        _, _, _  = self._adaptation.get_command(
             0.0,
             0.0,
             0.0,
-            use_state=(ADAPTATION_VERSION == STATE_FAST),
-            use_state_gp=(ADAPTATION_VERSION == STATE_FAST_GP),
+            np.zeros((8,)),
+            0.0,
+            0.0,
         )
-
-        # Send Adaptation configuration to Influx
-        try:
-            writeEntry(
-                self.influx_client,
-                "/adaptation_configuration",
-                [
-                    ("Edge_avoidance", ADAPTATION_EDGE_AVOIDANCE == "on"),
-                    ("Edge_avoidance_Treadmill_half_width", TREADMILL_HALF_WIDTH),
-                    ("Edge_avoidance_Safety_threshold", SAFETY_THRESHOLD),
-                ],
-            )
-        except BaseException as e:
-            self._logger.warning("Warning: Influx sending failed.")
-            self._logger.warning(e)
 
         self._logger.info("Adaptation: Completed __init__")
 
@@ -1644,7 +1365,7 @@ class Adaptation(Node):
 
         # Get the latest state from Queue
         try:
-            self.state = (
+            (self.state, self.sensor_x, self.sensor_y) = (
                 self.sensor_collection_to_adaptation_datapoint_queue.get_nowait()
             )
         except BaseException:
@@ -1660,55 +1381,49 @@ class Adaptation(Node):
             self._logger.info("Present: HumanControl")
             self._sub_cmd_vel_human_seen = True
 
-        # Avoid passing commands while the GPTraining is starting
-        if not self.start_adaptation:
-            try:
-                self.gp_training_to_adaptation_start_queue.get_nowait()
-                self.start_adaptation = True
-                self._logger.debug("Starting Adaptation")
-            except BaseException:
-                pass
-        else:
+        # Apply adaptation
+        adaptation_msg = self.adaptation(deepcopy(msg))
 
-            # Apply adaptation
-            adaptation_msg = self.adaptation(deepcopy(msg))
+        # Apply perturbation
+        final_msg = self.perturbation_transform.apply_perturbation(
+            deepcopy(adaptation_msg), self.state
+        )
 
-            # Apply perturbation
-            final_msg = self.perturbation_transform.apply_perturbation(
-                deepcopy(adaptation_msg), self.state
+        # Send new command msg
+        self._send_movement(final_msg)
+
+        # Send to Influx
+        try:
+            end_timestamp = self.get_clock().now().to_msg()
+            end_timestamp = int(end_timestamp.sec) * int(1e9) + int(
+                end_timestamp.nanosec
             )
-
-            # Send new command msg
-            self._send_movement(final_msg)
-
-            # Send to Influx
-            try:
-                end_timestamp = self.get_clock().now().to_msg()
-                end_timestamp = int(end_timestamp.sec) * int(1e9) + int(end_timestamp.nanosec)
-                start_timestamp = msg.joystick.original_stamp
-                start_timestamp = int(start_timestamp.sec) * int(1e9) + int(start_timestamp.nanosec)
-                writeEntry(
-                    self.influx_client,
-                    "/adaptation",
-                    [
-                        ("human_cmd_lin_x", msg.joystick.linear.x),
-                        ("human_cmd_ang_z", msg.joystick.angular.z),
-                        ("human_cmd_flipper", msg.flipper.angular.x),
-                        ("adaptation_cmd_lin_x", adaptation_msg.joystick.linear.x),
-                        ("adaptation_cmd_ang_z", adaptation_msg.joystick.angular.z),
-                        ("adaptation_cmd_flipper", adaptation_msg.flipper.angular.x),
-                        ("perturbation_cmd_lin_x", final_msg.joystick.linear.x),
-                        ("perturbation_cmd_ang_z", final_msg.joystick.angular.z),
-                        ("perturbation_cmd_flipper", final_msg.flipper.angular.x),
-                        ("original_id", msg.joystick.original_id),
-                        ("original_start", start_timestamp),
-                        ("adaptation_end", end_timestamp),
-                    ],
-                    timestamp=end_timestamp,
-                )
-            except BaseException as e:
-                self._logger.warning("Warning: Influx sending failed.")
-                self._logger.warning(e)
+            start_timestamp = msg.joystick.original_stamp
+            start_timestamp = int(start_timestamp.sec) * int(1e9) + int(
+                start_timestamp.nanosec
+            )
+            writeEntry(
+                self.influx_client,
+                "/l1_adaptation",
+                [
+                    ("human_cmd_lin_x", msg.joystick.linear.x),
+                    ("human_cmd_ang_z", msg.joystick.angular.z),
+                    ("human_cmd_flipper", msg.flipper.angular.x),
+                    ("adaptation_cmd_lin_x", adaptation_msg.joystick.linear.x),
+                    ("adaptation_cmd_ang_z", adaptation_msg.joystick.angular.z),
+                    ("adaptation_cmd_flipper", adaptation_msg.flipper.angular.x),
+                    ("perturbation_cmd_lin_x", final_msg.joystick.linear.x),
+                    ("perturbation_cmd_ang_z", final_msg.joystick.angular.z),
+                    ("perturbation_cmd_flipper", final_msg.flipper.angular.x),
+                    ("original_id", msg.joystick.original_id),
+                    ("original_start", start_timestamp),
+                    ("adaptation_end", end_timestamp),
+                ],
+                timestamp=end_timestamp,
+            )
+        except BaseException as e:
+            self._logger.warning("Warning: Influx sending failed.")
+            self._logger.warning(e)
 
     def _send_movement(self, movement: FunctionalityControllerControl) -> None:
         """Publish the Adaptation command to the robot."""
@@ -1731,37 +1446,9 @@ class Adaptation(Node):
         new_msg.flipper.original_id = msg.flipper.original_id
         new_msg.flipper.original_stamp = msg.flipper.original_stamp
 
-        # Get new model from Queue
-        try:
-            (
-                all_corrected_descriptors,
-                uncertainties,
-                rotation,
-                offset,
-                max_x,
-                max_y,
-                dataset_state,
-                kernel_x,
-            ) = self.gp_training_to_adaptation_model_queue.get_nowait()
-
-            # Store the map
-            self._adaptation.all_corrected_descriptors = all_corrected_descriptors
-            self._adaptation.uncertainties = uncertainties
-            self._adaptation.learned_params = rotation
-            self._adaptation.cov_alpha = offset
-            self._adaptation.max_x = max_x
-            self._adaptation.max_y = max_y
-
-            self._adaptation.dataset_state = dataset_state
-            self._adaptation.kernel_x = kernel_x
-            # self._logger.debug('NEW MODEL received from GP')
-
-        except BaseException:
-            pass
-
         # Get the latest state from Queue
         try:
-            self.state = (
+            (self.state, self.sensor_x, self.sensor_y) = (
                 self.sensor_collection_to_adaptation_datapoint_queue.get_nowait()
             )
         except BaseException:
@@ -1772,31 +1459,22 @@ class Adaptation(Node):
         cmd_ang_z = msg.joystick.angular.z
         cmd_flipper = msg.flipper.angular.x
 
-        # Get the state and apply edge avoidance
-        if self.state is not None:
-            self._adaptation.state = self.state[:]
-
-            if ADAPTATION_EDGE_AVOIDANCE == "on":
-                cmd_lin_x, cmd_ang_z, cmd_flipper = self._edge_avoidance(
-                    cmd_lin_x, cmd_ang_z, cmd_flipper
-                )
-
         # Get command from adaptation
         (
-            gp_prediction_x,
-            gp_prediction_y,
-            gp_prediction_flipper,
-            descriptor_x,
-            descriptor_z,
-            uncertainty_x,
-            uncertainty_y,
+            lqr_prediction_x,
+            lqr_prediction_y,
+            lqr_prediction_flipper,
         ) = self._adaptation.get_command(
             cmd_lin_x,
             cmd_ang_z,
             cmd_flipper,
-            use_state=(ADAPTATION_VERSION == STATE_FAST),
-            use_state_gp=(ADAPTATION_VERSION == STATE_FAST_GP),
+            self.state, 
+            self.sensor_x,
+            self.sensor_y,
         )
+        #self._logger.debug(
+        #        f"Running with Commands {cmd_lin_x}{cmd_ang_z} velocities{self.sensor_x} and {self.sensor_y} and Predicted commands {lqr_prediction_x} {lqr_prediction_y}"
+        #    )
 
         # If the Adaptation is off, just pass commands through
         if self.adaptation_off:
@@ -1807,34 +1485,32 @@ class Adaptation(Node):
             new_msg.joystick.linear.x = command_x
             new_msg.joystick.angular.z = command_y
             new_msg.flipper.angular.x = command_flipper
-            new_msg.uncertainty_joystick.linear.x = 0.0
-            new_msg.uncertainty_joystick.linear.z = 0.0
 
         # If the Adaptation is on, apply the Adaptation correction
         else:
-            command_x = gp_prediction_x
-            command_y = gp_prediction_y
-            command_flipper = gp_prediction_flipper
+            command_x = lqr_prediction_x
+            command_y = lqr_prediction_y
+            command_flipper = lqr_prediction_flipper
 
             new_msg.joystick.linear.x = command_x
             new_msg.joystick.angular.z = command_y
             new_msg.flipper.angular.x = command_flipper
-            new_msg.uncertainty_joystick.linear.x = uncertainty_x
-            new_msg.uncertainty_joystick.linear.z = uncertainty_y
+
+        #self._logger.debug(f"Errors Prediction {lqr_prediction_x - cmd_lin_x}, {lqr_prediction_y - cmd_ang_z}")
 
         # Empty DataCollection queue
         try:
-            self.adaptation_to_gp_collection_command_queue.get_nowait()
+            self.adaptation_to_rl_collection_command_queue.get_nowait()
         except BaseException:
             pass
 
         # Send to DataCollection
-        self.adaptation_to_gp_collection_command_queue.put(
+        self.adaptation_to_rl_collection_command_queue.put(
             (
                 deepcopy(command_x),
                 deepcopy(command_y),
-                deepcopy(gp_prediction_x),
-                deepcopy(gp_prediction_y),
+                deepcopy(lqr_prediction_x),
+                deepcopy(lqr_prediction_y),
                 deepcopy(msg.joystick.linear.x),
                 deepcopy(msg.joystick.angular.z),
             )
@@ -1843,63 +1519,22 @@ class Adaptation(Node):
         # Return final msg
         return new_msg
 
-    def _edge_avoidance(
-        self, cmd_lin_x: float, cmd_ang_z: float, cmd_flipper: float
-    ) -> Tuple:
-        """Apply the edge avoidance."""
-
-        error = (0.0 - self.state[5]) * 2
-
-        # If too on the right
-        if self.state[4] > (TREADMILL_HALF_WIDTH * SAFETY_THRESHOLD):
-            if cmd_lin_x >= 0:
-                if self.state[5] >= 0.0:
-                    cmd_ang_z -= error
-                    self._logger.debug("EDGE AVOIDANCE")
-            elif cmd_lin_x < 0:
-                if self.state[5] < 0.0:
-                    cmd_ang_z -= error
-                    self._logger.debug("EDGE AVOIDANCE")
-            if self.state[4] > TREADMILL_HALF_WIDTH:
-                cmd_ang_z = np.clip(cmd_ang_z, 0, None)
-                self._logger.debug("EDGE AVOIDANCE")
-
-        # If too on the left
-        elif self.state[4] < (-TREADMILL_HALF_WIDTH * SAFETY_THRESHOLD):
-            if cmd_lin_x >= 0:
-                if self.state[5] <= 0.0:
-                    cmd_ang_z -= error
-                    self._logger.debug("EDGE AVOIDANCE")
-            elif cmd_lin_x < 0:
-                if self.state[5] > 0.0:
-                    cmd_ang_z -= error
-                    self._logger.debug("EDGE AVOIDANCE")
-            if self.state[4] < -TREADMILL_HALF_WIDTH:
-                cmd_ang_z = np.clip(cmd_ang_z, None, 0)
-                self._logger.debug("EDGE AVOIDANCE")
-
-        # Return new commands
-        return cmd_lin_x, cmd_ang_z, cmd_flipper
 
 
 # Adaptation process
 def start_adaptation_process(
     args,
     loglevel: str,
-    gp_training_to_adaptation_model_queue: multiprocessing.Queue,
     sensor_collection_to_adaptation_datapoint_queue: multiprocessing.Queue,
-    adaptation_to_gp_collection_command_queue: multiprocessing.Queue,
-    gp_training_to_adaptation_start_queue: multiprocessing.Queue,
+    adaptation_to_rl_collection_command_queue: multiprocessing.Queue,
 ) -> None:
     """Thread for the Adaptation."""
 
     # Start Adaptation process
     rclpy.init(args=args)
     antoine = Adaptation(
-        gp_training_to_adaptation_model_queue=gp_training_to_adaptation_model_queue,
         sensor_collection_to_adaptation_datapoint_queue=sensor_collection_to_adaptation_datapoint_queue,
-        adaptation_to_gp_collection_command_queue=adaptation_to_gp_collection_command_queue,
-        gp_training_to_adaptation_start_queue=gp_training_to_adaptation_start_queue,
+        adaptation_to_rl_collection_command_queue=adaptation_to_rl_collection_command_queue,
         loglevel=loglevel,
     )
     rclpy.spin(antoine)
@@ -1944,21 +1579,18 @@ def main():
     args = parser.parse_args(args=newargs[1:])
 
     # Create all the Queues
-    sensor_collection_to_gp_collection_datapoint_queue = context.Queue()
+    sensor_collection_to_rl_collection_datapoint_queue = context.Queue()
     sensor_collection_to_adaptation_datapoint_queue = context.Queue()
 
-    sensor_collection_to_gp_training_reset_queue = context.Queue()
-    sensor_collection_to_gp_collection_reset_queue = context.Queue()
+    sensor_collection_to_rl_training_reset_queue = context.Queue()
+    sensor_collection_to_rl_collection_reset_queue = context.Queue()
 
-    adaptation_to_gp_collection_command_queue = context.Queue()
+    adaptation_to_rl_collection_command_queue = context.Queue()
 
-    gp_collection_to_gp_training_datapoint_queue = context.Queue()
+    rl_collection_to_rl_training_datapoint_queue = context.Queue()
 
-    gp_collection_to_sensor_collection_start_queue = context.Queue()
-    gp_training_to_gp_collection_start_queue = context.Queue()
-    gp_training_to_adaptation_start_queue = context.Queue()
-
-    gp_training_to_adaptation_model_queue = context.Queue()
+    rl_collection_to_sensor_collection_start_queue = context.Queue()
+    rl_training_to_rl_collection_start_queue = context.Queue()
 
     # Start Sensor Collection process
     sensor_collection_process = context.Process(
@@ -1966,56 +1598,54 @@ def main():
         args=(
             sys.argv,
             args.log,
-            sensor_collection_to_gp_collection_datapoint_queue,
+            sensor_collection_to_rl_collection_datapoint_queue,
             sensor_collection_to_adaptation_datapoint_queue,
-            sensor_collection_to_gp_training_reset_queue,
-            sensor_collection_to_gp_collection_reset_queue,
-            gp_collection_to_sensor_collection_start_queue,
+            sensor_collection_to_rl_training_reset_queue,
+            sensor_collection_to_rl_collection_reset_queue,
+            rl_collection_to_sensor_collection_start_queue,
         ),
     )
     sensor_collection_process.daemon = True
     sensor_collection_process.start()
 
-    # Start GP Collection process
-    gp_collection_process = context.Process(
-        target=start_gp_collection_process,
-        args=(
-            sys.argv,
-            args.log,
-            adaptation_to_gp_collection_command_queue,
-            sensor_collection_to_gp_collection_datapoint_queue,
-            gp_collection_to_gp_training_datapoint_queue,
-            gp_training_to_gp_collection_start_queue,
-            gp_collection_to_sensor_collection_start_queue,
-            sensor_collection_to_gp_collection_reset_queue,
-        ),
-    )
-    gp_collection_process.daemon = True
-    gp_collection_process.start()
+    # Start RL Collection process
+    #rl_collection_process = context.Process(
+    #    target=start_rl_collection_process,
+    #    args=(
+    #        sys.argv,
+    #        args.log,
+    #        adaptation_to_rl_collection_command_queue,
+    #        sensor_collection_to_rl_collection_datapoint_queue,
+    #        rl_collection_to_rl_training_datapoint_queue,
+    #        rl_training_to_rl_collection_start_queue,
+    #        rl_collection_to_sensor_collection_start_queue,
+    #        sensor_collection_to_rl_collection_reset_queue,
+    #    ),
+    #)
+    #rl_collection_process.daemon = True
+    #rl_collection_process.start()
 
-    # Start GP Training process
-    gp_training_process = context.Process(
-        target=start_gp_training_process,
-        args=(
-            args.log,
-            gp_training_to_adaptation_model_queue,
-            gp_collection_to_gp_training_datapoint_queue,
-            gp_training_to_gp_collection_start_queue,
-            gp_training_to_adaptation_start_queue,
-            sensor_collection_to_gp_training_reset_queue,
-        ),
-    )
-    gp_training_process.daemon = True
-    gp_training_process.start()
+    # Start RL Training process
+    # rl_training_process = context.Process(
+    #     target=start_rl_training_process,
+    #     args=(
+    #         args.log,
+    #         rl_training_to_adaptation_model_queue,
+    #         rl_collection_to_rl_training_datapoint_queue,
+    #         rl_training_to_rl_collection_start_queue,
+    #         rl_training_to_adaptation_start_queue,
+    #         sensor_collection_to_rl_training_reset_queue,
+    #     ),
+    # )
+    # rl_training_process.daemon = True
+    # rl_training_process.start()
 
     # Start Adaptation
     start_adaptation_process(
         sys.argv,
         args.log,
-        gp_training_to_adaptation_model_queue,
         sensor_collection_to_adaptation_datapoint_queue,
-        adaptation_to_gp_collection_command_queue,
-        gp_training_to_adaptation_start_queue,
+        adaptation_to_rl_collection_command_queue,
     )
 
 

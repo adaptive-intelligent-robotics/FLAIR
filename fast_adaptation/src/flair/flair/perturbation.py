@@ -358,7 +358,7 @@ class PerturbationTransform:
         point = 0.0
         error = point - self.angle
 
-        error *= 0.6/np.pi
+        error *= 0.6 / np.pi
 
         perturbation = np.clip(abs(error), 0, 0.6)
 

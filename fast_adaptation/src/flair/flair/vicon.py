@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import logging
-import time
 import os
+import time
 from collections import deque
 
 import numpy as np
@@ -15,13 +15,12 @@ from scipy.signal import savgol_filter
 from scipy.spatial.transform import Rotation as R
 from vicon_msgs.msg import Position
 
-
 ADAPTATION_ON = True
 
 NUM_REP = 20
 
 # If all are false, use default Ramp + Wind
-CHICANE_MODE = False 
+CHICANE_MODE = False
 WIND_ONLY_MODE = False
 ROBUSTNESS_MODE = False
 assert not(CHICANE_MODE and WIND_ONLY_MODE), "ERROR both CHICANE_MODE and WIND_ONLY_MODE set to True."
@@ -63,7 +62,7 @@ BIG_LOOP_RAMP = [
     (1447, 534),
     (2878, 973),
     (1934, 1680),
-    (1232,1500),
+    (1232, 1500),
 ]
 
 # Small loop on the floor
@@ -73,22 +72,22 @@ SMALL_LOOP_JUNCTION = [
 ]
 ## Smaller Loop
 SMALL_LOOP_LAP = [
-     (-1667, 1901),
-     (-2009, 978),
-     (-1762, 331),
-     (-1419, -8), 
-     (-347, -234),
-     #(-468, -140),
-     #(-405, -288),
-     (344, 203),
-     #(585, 115),
-     (642, 1121),
-     #(858, 1068),
-     (97, 2244),
-     #(416, 2167),
-     (-821, 2566),
-     #(-591, 2465),
-     #(-594, 2752),
+    (-1667, 1901),
+    (-2009, 978),
+    (-1762, 331),
+    (-1419, -8),
+    (-347, -234),
+    # (-468, -140),
+    # (-405, -288),
+    (344, 203),
+    # (585, 115),
+    (642, 1121),
+    # (858, 1068),
+    (97, 2244),
+    # (416, 2167),
+    (-821, 2566),
+    # (-591, 2465),
+    # (-594, 2752),
 ]
 if WIND_ONLY_MODE:
     SMALL_LOOP = NUMBER_LAPS_WIND * SMALL_LOOP_LAP
@@ -103,7 +102,7 @@ CHICANE_LOOP_LAP = [
     (1966, 2066),
     (2296, 1613),
     (2328, 388),
-    (1895,-12),
+    (1895, -12),
     (1495, 65),
     (1272, 298),
     (1229, 1040),
@@ -118,6 +117,7 @@ CHICANE_LOOP = CHICANE_LOOP_LAP * NUMBER_LAPS_CHICANE
 
 ####################
 # Common functions #
+
 
 class MyStreamHandler(logging.StreamHandler):
     def flush(self) -> None:
@@ -175,6 +175,7 @@ def writeEntry(
 
 ######################
 # Main Vicon class #
+
 
 class Vicon(Node):
     def __init__(self, loglevel: str = "INFO") -> None:
@@ -246,12 +247,12 @@ class Vicon(Node):
         if CHICANE_MODE:
             self.path = self.chicane + [self.chicane[0]]
         elif WIND_ONLY_MODE:
-            self.path = self.small_loop + [self.big_loop_ramp[0]] 
+            self.path = self.small_loop + [self.big_loop_ramp[0]]
         elif ROBUSTNESS_MODE:
             self.big_loop_ramp = self.big_loop_ramp + self.small_loop[0:2]
             self.path = self.big_loop_ramp + [(-1556, 2020)]
         else:
-            self.path = self.big_loop_ramp + self.small_loop + [self.big_loop_ramp[0]] 
+            self.path = self.big_loop_ramp + self.small_loop + [self.big_loop_ramp[0]]
 
         # Set up perturbations (default no-perturbations)
         self._logger.warning("")
@@ -266,8 +267,9 @@ class Vicon(Node):
 
             self._logger.warning("DRIVER: Running CHICANE driver.")
 
-            assert not(USE_DYNAMIC_WAYPOINT_SCALING_CHICANE and USE_STATIC_SCALING_CHICANE), \
-                "Both dynamic and static damage are on on the chicane, choose one only."
+            assert not (
+                USE_DYNAMIC_WAYPOINT_SCALING_CHICANE and USE_STATIC_SCALING_CHICANE
+            ), "Both dynamic and static damage are on on the chicane, choose one only."
 
             # Set up static scaling
             if USE_STATIC_SCALING_CHICANE:
@@ -333,7 +335,8 @@ class Vicon(Node):
             if USE_SCALING_BIG_LOOP:
                 self._logger.warning("DRIVER: Applying static scaling perturbation on the ramp in the big loop.")
                 self.scaling = [
-                    way_point < len(self.big_loop_ramp) for way_point in range (len(self.path))
+                    way_point < len(self.big_loop_ramp)
+                    for way_point in range(len(self.path))
                 ]
             else:
                 self._logger.warning("DRIVER: Applying no perturbation on the ramp in the big loop.")
@@ -342,10 +345,20 @@ class Vicon(Node):
             if USE_WIND_SMALL_LOOP:
                 self._logger.warning("DRIVER: Applying wind perturbation in the small loop.")
                 self.wind = [
-                    way_point >= (len(self.big_loop_ramp) + WIND_DELAY) for way_point in range (len(self.path))
+                    way_point >= (len(self.big_loop_ramp) + WIND_DELAY)
+                    for way_point in range(len(self.path))
                 ]
             else:
-                self._logger.warning("DRIVER: Applying no wind perturbation in the small loop.")
+                self._logger.warning(
+                    "DRIVER: Applying no wind perturbation in the small loop."
+                )
+
+        # SAFETY: initialise attributes for safety
+        self.done_safety = False
+        self.safety_mode = False
+        self.safety_path = self.path[0]
+        self.normal_path = self.path
+        self._smaller_distance_so_far = np.inf
 
         self.reset_and_start_rep()
 
@@ -359,12 +372,68 @@ class Vicon(Node):
         if self.current_rep > NUM_REP:
             return
 
+        # SAFETY: If caused by a safety stop, drive to initial position with nothing on
+        if self.done_safety:
+            self._logger.info(f"Bringing robot back to initial position after safety reset.")
+
+            # Send to Influx
+            try:
+                writeEntry(
+                    self.influx_client,
+                    "/done_safety",
+                    [
+                        ("done_safety", True),
+                        ("target", self.target),
+                        ("smaller_distance", self._smaller_distance_so_far),
+                    ],
+                )
+            except BaseException as e:
+                self._logger.warning("Warning: Influx sending failed.")
+                self._logger.warning(e)
+
+            # Reset everything
+            self.previous_position = None
+            self.previous_rot = None
+            self.target = 0
+            self.done = False
+            self.done_safety = False
+            self._smaller_distance_so_far = np.inf
+            self._send_perturbation(
+                scaling=False,
+                scaling_side="right",
+                scaling_amplitude=1.0,
+                dynamic_scaling=False,
+                dynamic_scaling_amplitude=1.0,
+                dynamic_scaling_interval=0.0,
+                offset=False,
+                wind=False,
+                bernoulli=False,
+            )
+
+            # De-activate the current controller
+            self._send_system_control(adaptation_reset=True, adaptation_on=False)
+            self._send_system_control(adaptation_reset=True, adaptation_on=False)
+            self._send_system_control(adaptation_reset=True, adaptation_on=False)
+
+            # Set up the path to be just a reset path
+            self._logger.info(f"Entering safety mode.")
+            self.safety_mode = True
+            self.path = self.safety_path
+
+        # SAFETY: if done with a saetyf reset, put everything back to normal
+        if self.safety_mode:
+            self._logger.info(f"Exiting safety mode.")
+            self.safety_mode = False
+            self.path = self.normal_path
+
         # Reset attributes and perturbations
         self._logger.info(f"Reseting attributes and perturbation for rep {self.current_rep} / {NUM_REP}.")
         self.previous_position = None
         self.previous_rot = None
         self.target = 0
         self.done = False
+        self.done_safety = False
+        self._smaller_distance_so_far = np.inf
         self._send_perturbation(
             scaling=False,
             scaling_side="right",
@@ -377,6 +446,7 @@ class Vicon(Node):
             bernoulli=False,
         )
 
+
         # Putting the robot back one meter to ensure smooth reset
         if self.current_rep > 1:
             self._logger.info(f"Reseting robot for rep {self.current_rep} / {NUM_REP}.")
@@ -388,7 +458,7 @@ class Vicon(Node):
             self._send_system_control(adaptation_reset=True)
             self._send_system_control(adaptation_reset=True)
             start_t = time.time()
-            while time.time() - start_t < 2.0:
+            while time.time() - start_t < 1.0:
                 self._send_human(new_msg)
                 time.sleep(0.1)
 
@@ -400,18 +470,18 @@ class Vicon(Node):
                 self.influx_client,
                 "/vicon_configuration",
                 [
-                    ('path', str(self.path)),
-                    ('big_loop_ramp', str(self.big_loop_ramp)),
-                    ('small_loop', str(self.small_loop)),
-                    ('chicane', str(self.chicane)),
-                    ('scaling', str(self.scaling)),
-                    ('scaling_sides', str(self.scaling_side)),
-                    ('scaling_amplitudes', str(self.scaling_amplitude)),
-                    ('wind', str(self.wind)),
-                    ('adaptation_on', ADAPTATION_ON),
-                    ('min_speed', MIN_DRIVER_SPEED),
-                    ('max_speed', MAX_DRIVER_SPEED),
-                    ('reset_dynamic_scaling', USE_RESET_DYNAMIC_SCALING),
+                    ("path", str(self.path)),
+                    ("big_loop_ramp", str(self.big_loop_ramp)),
+                    ("small_loop", str(self.small_loop)),
+                    ("chicane", str(self.chicane)),
+                    ("scaling", str(self.scaling)),
+                    ("scaling_sides", str(self.scaling_side)),
+                    ("scaling_amplitudes", str(self.scaling_amplitude)),
+                    ("wind", str(self.wind)),
+                    ("adaptation_on", ADAPTATION_ON),
+                    ("min_speed", MIN_DRIVER_SPEED),
+                    ("max_speed", MAX_DRIVER_SPEED),
+                    ("reset_dynamic_scaling", USE_RESET_DYNAMIC_SCALING),
                 ],
             )
         except BaseException as e:
@@ -420,9 +490,8 @@ class Vicon(Node):
 
         self._logger.info(f"Starting rep {self.current_rep} / {NUM_REP}.")
 
-
     def _vicon_callback(self, msg: Position) -> None:
-        """Process sensor data, when receiving them through adapted topic."""
+        """Process sensor data, when receiving them through massaged topic."""
         if not self._sub_vicon_seen:
             self._logger.info("Present: Vicon Data")
             self._sub_vicon_seen = True
@@ -457,12 +526,12 @@ class Vicon(Node):
         # Send Path Tracking command
         current_way_point = self.target % len(self.path) # Works for random number of laps
         # if current_way_point < len(self.big_loop_ramp) and current_way_point == len(self.path):
-        if current_way_point == len(self.path)-1:
+        if current_way_point == len(self.path) - 1:
             self.error_threshold = 0.2
         else:
             self.error_threshold = 0.1
         human_msg = self.follow_path(msg)
-        
+
         # Send SystemControl
         self._send_system_control(adaptation_reset=self.robot_reset[current_way_point])
 
@@ -471,7 +540,7 @@ class Vicon(Node):
             scaling=self.scaling[current_way_point],
             scaling_side=self.scaling_side[current_way_point],
             scaling_amplitude=self.scaling_amplitude[current_way_point],
-            dynamic_scaling=False, 
+            dynamic_scaling=False,
             dynamic_scaling_amplitude=1.0,
             dynamic_scaling_interval=0.0,
             offset=False,
@@ -501,18 +570,18 @@ class Vicon(Node):
                 self.influx_client,
                 "/vicon_sensor",
                 [
-                    ('tx', movement.tx),
-                    ('ty', movement.ty),
-                    ('tz', movement.tz),
-                    ('vx', movement.vx),
-                    ('vy', movement.vy),
-                    ('vz', movement.vz),
-                    ('roll', movement.roll),
-                    ('pitch', movement.pitch),
-                    ('yaw', movement.yaw),
-                    ('wx', movement.wx),
-                    ('wy', movement.wy),
-                    ('wz', movement.wz),
+                    ("tx", movement.tx),
+                    ("ty", movement.ty),
+                    ("tz", movement.tz),
+                    ("vx", movement.vx),
+                    ("vy", movement.vy),
+                    ("vz", movement.vz),
+                    ("roll", movement.roll),
+                    ("pitch", movement.pitch),
+                    ("yaw", movement.yaw),
+                    ("wx", movement.wx),
+                    ("wy", movement.wy),
+                    ("wz", movement.wz),
                 ],
             )
         except BaseException as e:
@@ -533,16 +602,16 @@ class Vicon(Node):
                 self.influx_client,
                 "/vicon_target",
                 [
-                    ('target_id', self.target),
-                    ('target_tx', self.path[self.target][0]),
-                    ('target_ty', self.path[self.target][1]),
+                    ("target_id", self.target),
+                    ("target_tx", self.path[self.target][0]),
+                    ("target_ty", self.path[self.target][1]),
                 ],
             )
         except BaseException as e:
             self._logger.warning("Warning: Influx sending failed.")
             self._logger.warning(e)
 
-    def _send_system_control(self, adaptation_reset = False):
+    def _send_system_control(self, adaptation_reset=False, adaptation_on=ADAPTATION_ON):
         """Create and send a system control message."""
         if not self._pub_system_control_sent:
             self._logger.info("Sent: SystemControl")
@@ -553,7 +622,7 @@ class Vicon(Node):
 
         status_msg = SystemControl()
         status_msg.stamp = self.get_clock().now().to_msg()
-        status_msg.adaptation_on = ADAPTATION_ON
+        status_msg.adaptation_on = adaptation_on
         status_msg.adaptation_reset = adaptation_reset
         status_msg.max_human_vx = 0.5
 
@@ -565,7 +634,7 @@ class Vicon(Node):
                 self.influx_client,
                 "/system_control",
                 [
-                    ("adaptation_on", ADAPTATION_ON),
+                    ("adaptation_on", adaptation_on),
                     ("adaptation_reset", adaptation_reset),
                     ("max_human_vx", 0.5),
                 ],
@@ -575,17 +644,17 @@ class Vicon(Node):
             self._logger.warning(e)
 
     def _send_perturbation(
-            self, 
-            scaling: bool, 
-            scaling_side: str,
-            scaling_amplitude: float,
-            dynamic_scaling: bool, 
-            dynamic_scaling_amplitude: float,
-            dynamic_scaling_interval: float,
-            offset: bool, 
-            wind: bool, 
-            bernoulli: bool,
-        ):
+        self,
+        scaling: bool,
+        scaling_side: str,
+        scaling_amplitude: float,
+        dynamic_scaling: bool,
+        dynamic_scaling_amplitude: float,
+        dynamic_scaling_interval: float,
+        offset: bool,
+        wind: bool,
+        bernoulli: bool,
+    ):
         """Create and send a perturbation message."""
         if not self._pub_perturbation_sent:
             self._logger.info("Sent: Perturbation")
@@ -610,16 +679,15 @@ class Vicon(Node):
             else:
                 self._logger.warning("WARNING: unknown perturbation side.")
 
-        
         # Set dynamic scaling
         if dynamic_scaling:
             perturbation_msg.dynamic_scale_amplitude = dynamic_scaling_amplitude
             perturbation_msg.dynamic_scale_interval = dynamic_scaling_interval
-                
+
         # Set offset
         if offset:
-            perturbation_msg.left_offset = 0.0 #OFFSET_AMPLITUDE
-            perturbation_msg.right_offset = 0.0 #OFFSET_AMPLITUDE
+            perturbation_msg.left_offset = 0.0  # OFFSET_AMPLITUDE
+            perturbation_msg.right_offset = 0.0  # OFFSET_AMPLITUDE
 
         # Set wind and bernoulli
         perturbation_msg.wind = wind
@@ -773,7 +841,7 @@ class Vicon(Node):
         # self.vx,self.vy,self.vz = self.quat_rotate_inverse(quaternion,trans_velocity)
 
     def follow_path(self, current_position: Position):
-        
+
         if self.path is None:
             return HumanControl()
         else:
@@ -796,7 +864,7 @@ class Vicon(Node):
             r = R.from_quat(quaternion)
         except Exception:
             self._logger.error(f"Quaternion conversion did not work properly.")
-            return  
+            return
 
         # Compute the error
         error_x = (x - x_pos) / 1000
@@ -805,11 +873,15 @@ class Vicon(Node):
         angle_heading = np.arctan2(error_robot_frame[1], error_robot_frame[0])
         distance = np.linalg.norm(error_robot_frame)
 
+        # SAFETY: Update smallest distance so far
+        if distance < self._smaller_distance_so_far:
+            self._smaller_distance_so_far = distance
+
         # If already at target, go to next target
         if distance < self.error_threshold:
 
             # If done with the path, print it
-            if self.target == (len(self.path)-1):
+            if self.target == (len(self.path) - 1):
                 new_msg = HumanControl()
                 # new_msg.joystick.linear.x = 0.0
                 # new_msg.joystick.angular.z = 0.0
@@ -823,13 +895,30 @@ class Vicon(Node):
                 return new_msg
 
             self.target += 1
-            self._logger.info(f"Next target: {self.target}, at: {self.path[self.target]}")
+            self._logger.info(
+                f"Next target: {self.target}, at: {self.path[self.target]}"
+            )
+
+            # SAFETY: Reset smallest distance so far for this target
+            self._smaller_distance_so_far = np.inf
+
             return self.follow_path(current_position)
-        
+
+        # SAFETY: if break safety condition, stop
+        # if distance > self._smaller_distance_so_far + 1.0:
+        #     self._logger.info("SAFETY CONSTRAINTS DONE with driver")
+        #     if not self.done:
+        #         self._send_system_control(adaptation_reset=True)
+        #         self.done = True
+        #         time.sleep(0.5)
+        #         self._logger.info("SAFETY CONSTRAINTS DONE with driver - case 1")
+        #     self.done_safety = True
+        #     return HumanControl()
+
         # Compute the new vx command
         if -np.pi / 4 > angle_heading or angle_heading > np.pi / 4:
             # If need reorientation, no vx
-            #self._logger.info(f"Angle too big case {angle_heading} {np.pi / 4}.")
+            # self._logger.info(f"Angle too big case {angle_heading} {np.pi / 4}.")
             v_lin = 0.0
 
         # elif (-np.pi / 8 > angle_heading or angle_heading > np.pi / 8)  and distance > 0.2:

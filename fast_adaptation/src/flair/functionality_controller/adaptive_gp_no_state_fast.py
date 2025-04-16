@@ -18,15 +18,14 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+from functionality_controller.datapoint import DataPoints
+from functionality_controller.dataset_fifo import FIFODataset
+from functionality_controller.dataset_grid import OUT_OF_BOUND, InputGridFIFODataset
+from functionality_controller.gp.gpjax_map_v2 import MAPMean, MAPPrior
 from gpjax.base import meta_leaves, meta_map
 from gpjax.dataset import Dataset
 from gpjax.fit import fit
 from gpjax.kernels import RBF, Matern52
-
-from functionality_controller.datapoint import DataPoints
-from functionality_controller.dataset_fifo import FIFODataset
-from functionality_controller.dataset_grid import InputGridFIFODataset, OUT_OF_BOUND
-from functionality_controller.gp.gpjax_map_v2 import MAPMean, MAPPrior
 
 
 class AdaptiveGP:
@@ -185,9 +184,7 @@ class AdaptiveGP:
         self.dataset = self.dataset_reset_fn(self.dataset)
 
         # Reset minibatch
-        self.minibatch_dataset = self.minibatch_dataset_reset_fn(
-            self.minibatch_dataset
-        )
+        self.minibatch_dataset = self.minibatch_dataset_reset_fn(self.minibatch_dataset)
 
         # Reset counters
         self.total_position = 0
@@ -218,9 +215,7 @@ class AdaptiveGP:
         # self._logger.debug("Entering update")
 
         # Update the dataset
-        self.dataset = self.dataset_add_fn(
-            dataset=self.dataset, datapoint=datapoint
-        )
+        self.dataset = self.dataset_add_fn(dataset=self.dataset, datapoint=datapoint)
 
         # Update N attribute for later calls
         self.total_position = self.total_position + jnp.sum(
@@ -248,7 +243,10 @@ class AdaptiveGP:
         """
 
         # If enough datapoints, train the model
-        if self.total_position > self.latest_train_total_position + self.min_diff_datapoint:
+        if (
+            self.total_position
+            > self.latest_train_total_position + self.min_diff_datapoint
+        ):
             # self._logger.debug("Start Training")
             opt_time, gp_fit_time = self._train_model()
             self.latest_train_total_position = self.total_position
@@ -289,10 +287,14 @@ class AdaptiveGP:
 
         # Compute all the corresponding errors
         intent_gp_error_x = np.abs(intent_x - gp_pred_x)
-        intent_gp_error_y = np.abs(intent_y - gp_pred_y) * self.auto_reset_angular_rot_weight
+        intent_gp_error_y = (
+            np.abs(intent_y - gp_pred_y) * self.auto_reset_angular_rot_weight
+        )
 
         cmd_sensor_error_x = np.abs(cmd_x - sensor_x)
-        cmd_sensor_error_y = np.abs(cmd_y - sensor_y) * self.auto_reset_angular_rot_weight
+        cmd_sensor_error_y = (
+            np.abs(cmd_y - sensor_y) * self.auto_reset_angular_rot_weight
+        )
 
         error_distance_x = np.abs(intent_gp_error_x - cmd_sensor_error_x)
         error_distance_y = np.abs(intent_gp_error_y - cmd_sensor_error_y)
@@ -316,7 +318,7 @@ class AdaptiveGP:
 
         # Else, just select the self.auto_reset_error_buffer_size latest errors
         self.mean_intent_error_buffer = self.mean_intent_error_buffer[
-            -self.auto_reset_error_buffer_size:
+            -self.auto_reset_error_buffer_size :
         ]
 
         # If there is an increase in the error in the buffer, reset
@@ -509,8 +511,8 @@ class AdaptiveGP:
 
         weights_noise = jnp.ones((dataset.command_x.shape[0]))
         # Apply weight for accumulated datapoints
-        #weights_noise = jnp.squeeze(1 / dataset.num_accumulate)
-        #if len(dataset.num_accumulate) == 1:
+        # weights_noise = jnp.squeeze(1 / dataset.num_accumulate)
+        # if len(dataset.num_accumulate) == 1:
         #    weights_noise = jnp.expand_dims(weights_noise, axis=0)
 
         # Compute corrected bd

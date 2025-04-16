@@ -1,11 +1,12 @@
 from collections import deque
+
 import numpy as np
 import scipy.signal
 
 
 class LiveFilter:
-    """Base class for live filters.
-    """
+    """Base class for live filters."""
+
     def process(self, x):
         # do not process NaNs
         if np.isnan(x):
@@ -26,6 +27,7 @@ class LiveLFilter(LiveFilter):
     >>> lfilter = LiveLFilter(b, a)
     >>> [lfilter(x) for x in xs]
     """
+
     def __init__(self, b, a):
         """Initialize live filter based on difference equation.
         Args:
@@ -40,8 +42,7 @@ class LiveLFilter(LiveFilter):
         self._ys = deque([0] * (len(a) - 1), maxlen=len(a) - 1)
 
     def _process(self, x):
-        """Filter incoming data with standard difference equations.
-        """
+        """Filter incoming data with standard difference equations."""
         self._xs.appendleft(x)
         y = np.dot(self.b, self._xs) - np.dot(self.a[1:], self._ys)
         y = y / self.a[0]
@@ -56,6 +57,7 @@ class LiveSosFilter(LiveFilter):
     >>> sosfilter = LiveSosFilter(sos)
     >>> [sosfilter(x) for x in xs]
     """
+
     def __init__(self, sos):
         """Initialize live second-order sections filter.
         Args:
@@ -68,8 +70,7 @@ class LiveSosFilter(LiveFilter):
         self.state = np.zeros((self.n_sections, 2))
 
     def _process(self, x):
-        """Filter incoming data with cascaded second-order sections.
-        """
+        """Filter incoming data with cascaded second-order sections."""
         for s in range(self.n_sections):  # apply filter sections in sequence
             b0, b1, b2, a0, a1, a2 = self.sos[s, :]
 
@@ -83,9 +84,10 @@ class LiveSosFilter(LiveFilter):
 
 
 def get_filter(order=4, cutoff=[0.5, 2.5], btype="bandpass", fs=30, output="ba"):
-    """Create live filter with lfilter or sosfilter implmementation.
-    """
-    coeffs = scipy.signal.iirfilter(order, Wn=cutoff, fs=fs, btype=btype, ftype="butter", output=output)
+    """Create live filter with lfilter or sosfilter implmementation."""
+    coeffs = scipy.signal.iirfilter(
+        order, Wn=cutoff, fs=fs, btype=btype, ftype="butter", output=output
+    )
 
     if output == "ba":
         return LiveLFilter(*coeffs)

@@ -19,31 +19,29 @@
 # ==============================================================================
 
 
-from typing import Any, Callable, Dict, Optional,Sequence,Tuple
-
+import copy
 import os
-import jax.numpy as jnp
-from jaxtyping import Array, Float
-from jax.random import KeyArray
-from functools import partial
 import time
+from functools import partial
+from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 
-from jaxlinop import identity, DiagonalLinearOperator
-from jaxkern.base import AbstractKernel
+import jax
+import jax.numpy as jnp
+import optax as ox
+from gpjax.abstractions import InferenceState, progress_bar_scan
 from gpjax.config import get_global_config
+from gpjax.gaussian_distribution import GaussianDistribution
+from gpjax.gps import AbstractPosterior, AbstractPrior, construct_posterior
 from gpjax.kernels import AbstractKernel
 from gpjax.likelihoods import AbstractLikelihood
 from gpjax.mean_functions import AbstractMeanFunction, Zero
-from gpjax.gaussian_distribution import GaussianDistribution
+from gpjax.parameters import ParameterState, constrain, trainable_params, unconstrain
+from jax.random import KeyArray
+from jaxkern.base import AbstractKernel
+from jaxlinop import DiagonalLinearOperator, identity
+from jaxtyping import Array, Float
+from jaxutils import Dataset
 
-from gpjax.gps import AbstractPrior,construct_posterior,AbstractPosterior
-import jax
-from jaxutils import Dataset
-import copy
-import optax as ox
-from gpjax.parameters import constrain, trainable_params, unconstrain,ParameterState
-from jaxutils import Dataset
-from gpjax.abstractions import InferenceState,progress_bar_scan
 
 class MAPMean(AbstractMeanFunction):
     """
@@ -52,7 +50,12 @@ class MAPMean(AbstractMeanFunction):
     """
 
     def __init__(
-        self, maps: Sequence[jnp.array],ref_map:jnp.array, output_dim: Optional[int] = 1,chosen_bd: Optional[int] = 0, name: Optional[str] = "Mean function", 
+        self,
+        maps: Sequence[jnp.array],
+        ref_map: jnp.array,
+        output_dim: Optional[int] = 1,
+        chosen_bd: Optional[int] = 0,
+        name: Optional[str] = "Mean function",
     ):
         """Initialise the constant-mean function.
         Args:
@@ -65,29 +68,39 @@ class MAPMean(AbstractMeanFunction):
         self.chosen_bd = chosen_bd
         super().__init__(output_dim, name)
 
-    def get_behaviours(self,input_points: Float[Array, "N D"],params:Dict,indices: Optional[jnp.array] = None,testing=False):
+    def get_behaviours(
+        self,
+        input_points: Float[Array, "N D"],
+        params: Dict,
+        indices: Optional[jnp.array] = None,
+        testing=False,
+    ):
 
         # errors = jnp.zeros(shape = (input_points.shape[0], self.output_dim))
         # scaling = params['scaling']
-        p1,p2 = params['rotation']#/jnp.max(params['rotation'])
-        p3,p4  = params['offset']
+        p1, p2 = params["rotation"]  # /jnp.max(params['rotation'])
+        p3, p4 = params["offset"]
 
         # p1,p2 = jnp.clip(p1,0,1),jnp.clip(p2,0,1)
         # p2 = 1.0
         w = 0.33
-        scaling = jnp.asarray([[(p1+p2)/2,(p2-p1)*w/4],[(p2-p1)/w,(p1+p2)/2]]).T
-        constants = jnp.ones(shape=(1,1)) #params['constant']
+        scaling = jnp.asarray(
+            [[(p1 + p2) / 2, (p2 - p1) * w / 4], [(p2 - p1) / w, (p1 + p2) / 2]]
+        ).T
+        constants = jnp.ones(shape=(1, 1))  # params['constant']
         all_maps = copy.deepcopy(self.maps_descriptors)
 
-        offset = jnp.round(jnp.asarray([[p3,p4]]),decimals=1)
+        offset = jnp.round(jnp.asarray([[p3, p4]]), decimals=1)
 
-        all_maps[0] = jnp.matmul(self.maps_descriptors[0],scaling) +offset
+        all_maps[0] = jnp.matmul(self.maps_descriptors[0], scaling) + offset
         # jax.tree_map(lambda x: jnp.matmul(x,scaling),self.maps_descriptors)
         # @partial(jax.jit, static_argnames=("k_nn",))
         # @jax.jit
         def _get_cells_indices(
-            descriptors: jnp.ndarray, centroids: jnp.ndarray, k_nn:int,
-        ) -> Tuple[jnp.ndarray,jnp.ndarray]:
+            descriptors: jnp.ndarray,
+            centroids: jnp.ndarray,
+            k_nn: int,
+        ) -> Tuple[jnp.ndarray, jnp.ndarray]:
             """
             set_of_descriptors of shape (1, num_descriptors)
             centroids of shape (num_centroids, num_descriptors)
@@ -96,17 +109,24 @@ class MAPMean(AbstractMeanFunction):
             ## Negating distances because we want the smallest ones
             min_args = jnp.argmin(distances)
             # min_dist,min_args = jax.lax.top_k(-1*distances,k_nn)
-            return min_args#,-1*min_dist
-            
-        func = jax.vmap(_get_cells_indices,in_axes=(0,None,None,))
+            return min_args  # ,-1*min_dist
+
+        func = jax.vmap(
+            _get_cells_indices,
+            in_axes=(
+                0,
+                None,
+                None,
+            ),
+        )
 
         if testing:
-            error_per_map = jax.tree_map(lambda x: (x-self.ref_map),all_maps)
+            error_per_map = jax.tree_map(lambda x: (x - self.ref_map), all_maps)
         else:
             if not indices:
                 ## get all the indices of the input points (The position of the genotypes needs to be unchanged across all maps)
                 # distances = jax.vmap(jnp.linalg.norm)(input_points-self.ref_map)
-                indices = func(input_points,self.ref_map,1)
+                indices = func(input_points, self.ref_map, 1)
                 # jax.lax.top_k(-distances,k=1)
                 ## Get BD from each Map for a Point
                 # distances = jax.tree_map(lambda x: jax.vmap(jnp.linalg.norm)(input_points-x),self.maps_descriptors)
@@ -115,9 +135,14 @@ class MAPMean(AbstractMeanFunction):
                 if input_points.shape[0] > 1:
                     indices = indices.squeeze()
                 else:
-                    indices = indices.reshape(-1,)
-                error_per_map = jax.tree_map(lambda x: (x.at[indices].get()-self.ref_map.at[indices].get()),all_maps)
-        
+                    indices = indices.reshape(
+                        -1,
+                    )
+                error_per_map = jax.tree_map(
+                    lambda x: (x.at[indices].get() - self.ref_map.at[indices].get()),
+                    all_maps,
+                )
+
         # indices,points = func(input_points,self.ref_map,1)
         # # jax.lax.top_k(-distances,k=1)
         # ## Get BD from each Map for a Point
@@ -129,33 +154,43 @@ class MAPMean(AbstractMeanFunction):
         # else:
         #     indices = indices.reshape(-1,)
         # error_per_map = jax.tree_map(lambda x: (x.at[indices].get()-self.ref_map.at[indices].get()),all_maps)
-        
-        
+
         error_per_map = jnp.asarray(error_per_map)
         # Weighted Sum of all the Errors per BD
-        errors = jnp.sum(error_per_map.at[:,:,self.chosen_bd].get()*constants,axis=0).reshape(-1, 1)
+        errors = jnp.sum(
+            error_per_map.at[:, :, self.chosen_bd].get() * constants, axis=0
+        ).reshape(-1, 1)
         # errors = errors.at[:,[self.chosen_bd]].get()
         return errors
 
     @jax.jit
-    def get_behaviours_inputs(self,input_points: Float[Array, "N D"],params:Dict,indices: Optional[jnp.array] = None):
+    def get_behaviours_inputs(
+        self,
+        input_points: Float[Array, "N D"],
+        params: Dict,
+        indices: Optional[jnp.array] = None,
+    ):
 
-        p1,p2 = params['rotation']#/jnp.max(params['rotation'])
-        p3,p4  = params['offset']
+        p1, p2 = params["rotation"]  # /jnp.max(params['rotation'])
+        p3, p4 = params["offset"]
         w = 0.33
-        scaling = jnp.asarray([[(p1+p2)/2,(p2-p1)*w/4],[(p2-p1)/w,(p1+p2)/2]]).T
-        constants = jnp.ones(shape=(1,1)) #params['constant']
+        scaling = jnp.asarray(
+            [[(p1 + p2) / 2, (p2 - p1) * w / 4], [(p2 - p1) / w, (p1 + p2) / 2]]
+        ).T
+        constants = jnp.ones(shape=(1, 1))  # params['constant']
         all_maps = copy.deepcopy(self.maps_descriptors)
 
-        offset = jnp.round(jnp.asarray([[p3,p4]]),decimals=1)
+        offset = jnp.round(jnp.asarray([[p3, p4]]), decimals=1)
 
-        all_maps[0] = jnp.matmul(self.maps_descriptors[0],scaling) +offset
+        all_maps[0] = jnp.matmul(self.maps_descriptors[0], scaling) + offset
         # jax.tree_map(lambda x: jnp.matmul(x,scaling),self.maps_descriptors)
         # @partial(jax.jit, static_argnames=("k_nn",))
         @jax.jit
         def _get_cells_indices(
-            descriptors: jnp.ndarray, centroids: jnp.ndarray, k_nn:int,
-        ) -> Tuple[jnp.ndarray,jnp.ndarray]:
+            descriptors: jnp.ndarray,
+            centroids: jnp.ndarray,
+            k_nn: int,
+        ) -> Tuple[jnp.ndarray, jnp.ndarray]:
             """
             set_of_descriptors of shape (1, num_descriptors)
             centroids of shape (num_centroids, num_descriptors)
@@ -164,11 +199,18 @@ class MAPMean(AbstractMeanFunction):
             ## Negating distances because we want the smallest ones
             min_args = jnp.argmin(distances)
             # min_dist,min_args = jax.lax.top_k(-1*distances,k_nn)
-            return min_args#,-1*min_dist
-            
-        func = jax.vmap(_get_cells_indices,in_axes=(0,None,None,))
-        
-        indices = func(input_points,self.ref_map,1)
+            return min_args  # ,-1*min_dist
+
+        func = jax.vmap(
+            _get_cells_indices,
+            in_axes=(
+                0,
+                None,
+                None,
+            ),
+        )
+
+        indices = func(input_points, self.ref_map, 1)
         # jax.lax.top_k(-distances,k=1)
         ## Get BD from each Map for a Point
         # distances = jax.tree_map(lambda x: jax.vmap(jnp.linalg.norm)(input_points-x),self.maps_descriptors)
@@ -177,62 +219,78 @@ class MAPMean(AbstractMeanFunction):
         if input_points.shape[0] > 1:
             indices = indices.squeeze()
         else:
-            indices = indices.reshape(-1,)
-        error_per_map = jax.tree_map(lambda x: (x.at[indices].get()-self.ref_map.at[indices].get()),all_maps)
-        
-        
+            indices = indices.reshape(
+                -1,
+            )
+        error_per_map = jax.tree_map(
+            lambda x: (x.at[indices].get() - self.ref_map.at[indices].get()), all_maps
+        )
+
         error_per_map = jnp.asarray(error_per_map)
         # Weighted Sum of all the Errors per BD
-        errors = jnp.sum(error_per_map.at[:,:,self.chosen_bd].get()*constants,axis=0).reshape(-1, 1)
+        errors = jnp.sum(
+            error_per_map.at[:, :, self.chosen_bd].get() * constants, axis=0
+        ).reshape(-1, 1)
         # errors = errors.at[:,[self.chosen_bd]].get()
         return errors
 
     @jax.jit
-    def get_behaviours_full_map(self,params:Dict):
+    def get_behaviours_full_map(self, params: Dict):
 
-        p1,p2 = params['rotation']#/jnp.max(params['rotation'])
-        p3,p4  = params['offset']
+        p1, p2 = params["rotation"]  # /jnp.max(params['rotation'])
+        p3, p4 = params["offset"]
         w = 0.33
-        scaling = jnp.asarray([[(p1+p2)/2,(p2-p1)*w/4],[(p2-p1)/w,(p1+p2)/2]]).T
-        constants = jnp.ones(shape=(1,1)) #params['constant']
+        scaling = jnp.asarray(
+            [[(p1 + p2) / 2, (p2 - p1) * w / 4], [(p2 - p1) / w, (p1 + p2) / 2]]
+        ).T
+        constants = jnp.ones(shape=(1, 1))  # params['constant']
         all_maps = copy.deepcopy(self.maps_descriptors)
 
-        offset = jnp.round(jnp.asarray([[p3,p4]]),decimals=1)
+        offset = jnp.round(jnp.asarray([[p3, p4]]), decimals=1)
 
-        all_maps[0] = jnp.matmul(self.maps_descriptors[0],scaling) +offset
-        
-        error_per_map = jax.tree_map(lambda x: (x-self.ref_map),all_maps)
-        
+        all_maps[0] = jnp.matmul(self.maps_descriptors[0], scaling) + offset
+
+        error_per_map = jax.tree_map(lambda x: (x - self.ref_map), all_maps)
+
         error_per_map = jnp.asarray(error_per_map)
         # Weighted Sum of all the Errors per BD
-        errors = jnp.sum(error_per_map.at[:,:,self.chosen_bd].get()*constants,axis=0).reshape(-1, 1)
+        errors = jnp.sum(
+            error_per_map.at[:, :, self.chosen_bd].get() * constants, axis=0
+        ).reshape(-1, 1)
         # errors = errors.at[:,[self.chosen_bd]].get()
         return errors
 
     @jax.jit
-    def get_behaviours_simple(self,input_points: Float[Array, "N D"],params:Dict):
+    def get_behaviours_simple(self, input_points: Float[Array, "N D"], params: Dict):
 
-        p1,p2 = params['rotation']#/jnp.max(params['rotation'])
-        p3,p4  = params['offset']
+        p1, p2 = params["rotation"]  # /jnp.max(params['rotation'])
+        p3, p4 = params["offset"]
         w = 0.33
-        scaling = jnp.asarray([[(p1+p2)/2,(p2-p1)*w/4],[(p2-p1)/w,(p1+p2)/2]]).T
-        constants = jnp.ones(shape=(1,1)) #params['constant']
+        scaling = jnp.asarray(
+            [[(p1 + p2) / 2, (p2 - p1) * w / 4], [(p2 - p1) / w, (p1 + p2) / 2]]
+        ).T
+        constants = jnp.ones(shape=(1, 1))  # params['constant']
 
-        offset = jnp.round(jnp.asarray([[p3,p4]]),decimals=1)
+        offset = jnp.round(jnp.asarray([[p3, p4]]), decimals=1)
 
-        new_map = jnp.matmul(input_points,scaling) + offset
-        
+        new_map = jnp.matmul(input_points, scaling) + offset
+
         # error_per_map = jax.tree_map(lambda x: (x-self.ref_map),all_maps)
-        
+
         # error_per_map = jnp.asarray(error_per_map)
         # # Weighted Sum of all the Errors per BD
         # errors = jnp.sum(error_per_map.at[:,:,self.chosen_bd].get()*constants,axis=0).reshape(-1, 1)
         # return errors
-        
-        return new_map.at[:,[self.chosen_bd]].get()
 
+        return new_map.at[:, [self.chosen_bd]].get()
 
-    def __call__(self, params: Dict, x: Float[Array, "N D"],indices: Optional[jnp.array]=None,testing=False) -> Float[Array, "N Q"]:
+    def __call__(
+        self,
+        params: Dict,
+        x: Float[Array, "N D"],
+        indices: Optional[jnp.array] = None,
+        testing=False,
+    ) -> Float[Array, "N Q"]:
         """Evaluate the mean function at the given points.
         Args:
             params (Dict): The parameters of the mean function.
@@ -240,7 +298,6 @@ class MAPMean(AbstractMeanFunction):
         Returns:
             Float[Array, "N Q"]: A vector of repeated constant values.
         """
-
 
         out_shape = (x.shape[0], self.output_dim)
 
@@ -253,7 +310,7 @@ class MAPMean(AbstractMeanFunction):
         #     mean_errors = self.get_behaviours_inputs(x[:,-2:],params,indices=None)
 
         # return mean_errors
-        transformed_map = self.get_behaviours_simple(x[:,-2:],params)
+        transformed_map = self.get_behaviours_simple(x[:, -2:], params)
         return transformed_map
 
     def init_params(self, key: KeyArray) -> Dict:
@@ -266,12 +323,10 @@ class MAPMean(AbstractMeanFunction):
 
         # return {"constant": jnp.ones(shape=(self.num_maps,1))/self.num_maps,"scaling":jnp.identity(2)}
 
-        
-        parameters = {"rotation":jnp.ones(shape=(2,)),"offset":jnp.zeros(shape=(2,))}
+        parameters = {"rotation": jnp.ones(shape=(2,)), "offset": jnp.zeros(shape=(2,))}
         # parameters['capacity'] = parameters['capacity'].at[:2].set(1.0)
         # return {"scaling":jnp.identity(2)}
         return parameters
-
 
 
 #######################
@@ -389,14 +444,14 @@ class MAPPrior(AbstractPrior):
         kernel = self.kernel
 
         def predict_fn(
-            test_inputs: Float[Array, "N D"],indices: Optional[jnp.array]=None
+            test_inputs: Float[Array, "N D"], indices: Optional[jnp.array] = None
         ) -> GaussianDistribution:
 
             # Unpack test inputs
             t = test_inputs
             n_test = test_inputs.shape[0]
 
-            μt = mean_function(params["mean_function"], t,testing=True)
+            μt = mean_function(params["mean_function"], t, testing=True)
             Ktt = kernel.gram(params["kernel"], t)
             Ktt += identity(n_test) * jitter
 
@@ -464,7 +519,7 @@ class MAPConjugatePosterior(AbstractPosterior):
         self,
         params: Dict,
         train_data: Dataset,
-        weights_noise : jnp.array,
+        weights_noise: jnp.array,
         indices: Optional[jnp.array] = None,
     ) -> Callable[[Float[Array, "N D"]], GaussianDistribution]:
         """Conditional on a training data set, compute the GP's posterior
@@ -515,25 +570,27 @@ class MAPConjugatePosterior(AbstractPosterior):
         start_t = time.time()
         # Observation noise σ²
         obs_noise = params["likelihood"]["obs_noise"]
-        μx = mean_function(params["mean_function"], x,indices)
+        μx = mean_function(params["mean_function"], x, indices)
         # μx = mean_function.get_behaviours_inputs(x[:,-2:],params["mean_function"],indices)
 
-        print("Mean Function Optim",{time.time() - start_t},flush=True)
+        print("Mean Function Optim", {time.time() - start_t}, flush=True)
         start_t = time.time()
         # Precompute Gram matrix, Kxx, at training inputs, x
         Kxx = kernel.gram(params["kernel"], x)
         Kxx += identity(n) * jitter
 
-        print("Kxx Optim",{time.time() - start_t},flush=True)
+        print("Kxx Optim", {time.time() - start_t}, flush=True)
         # Σ = Kxx + Dσ²
-        
-        start_t = time.time()
-        Sigma = Kxx + DiagonalLinearOperator(weights_noise) * obs_noise 
-        print("Kxx Optim",{time.time() - start_t},flush=True)
-        # Σ = Kxx + Iσ²
-        # Sigma = Kxx + identity(n) * obs_noise 
 
-        def predict(test_inputs: Float[Array, "N D"],testing=True) -> GaussianDistribution:
+        start_t = time.time()
+        Sigma = Kxx + DiagonalLinearOperator(weights_noise) * obs_noise
+        print("Kxx Optim", {time.time() - start_t}, flush=True)
+        # Σ = Kxx + Iσ²
+        # Sigma = Kxx + identity(n) * obs_noise
+
+        def predict(
+            test_inputs: Float[Array, "N D"], testing=True
+        ) -> GaussianDistribution:
             """Compute the predictive distribution at a set of test inputs.
             Args:
                 test_inputs (Float[Array, "N D"]): A Jax array of test inputs.
@@ -546,7 +603,7 @@ class MAPConjugatePosterior(AbstractPosterior):
             t = test_inputs
             n_test = test_inputs.shape[0]
 
-            μt = mean_function(params["mean_function"], t,testing=testing)
+            μt = mean_function(params["mean_function"], t, testing=testing)
             # μt = mean_function.get_behaviours_full_map(params["mean_function"])
 
             Ktt = kernel.gram(params["kernel"], t)
@@ -561,9 +618,7 @@ class MAPConjugatePosterior(AbstractPosterior):
             covariance = Ktt - jnp.matmul(Kxt.T, Sigma_inv_Kxt)
             covariance += identity(n_test) * jitter
 
-            return GaussianDistribution(
-                jnp.atleast_1d(mean.squeeze()), covariance
-            )
+            return GaussianDistribution(jnp.atleast_1d(mean.squeeze()), covariance)
 
         return predict
 
@@ -645,7 +700,6 @@ class MAPConjugatePosterior(AbstractPosterior):
             obs_noise = params["likelihood"]["obs_noise"]
             μx = mean_function(params["mean_function"], x)
             # μx = mean_function.get_behaviours_inputs(x[:,-2:],params["mean_function"])
-            
 
             # TODO: This implementation does not take advantage of the covariance operator structure.
             # Future work concerns implementation of a custom Gaussian distribution / measure object that accepts a covariance operator.
@@ -661,13 +715,10 @@ class MAPConjugatePosterior(AbstractPosterior):
             )
 
             return constant * (
-                marginal_likelihood.log_prob(
-                    jnp.atleast_1d(y.squeeze())
-                ).squeeze()
+                marginal_likelihood.log_prob(jnp.atleast_1d(y.squeeze())).squeeze()
             )
 
         return mll
-    
 
 
 def map_fit(
@@ -698,7 +749,7 @@ def map_fit(
     def loss(params: Dict) -> Float[Array, "1"]:
         params = trainable_params(params, trainables)
         params = constrain(params, bijectors)
-        return objective1(params)+objective2(params)
+        return objective1(params) + objective2(params)
         # return -jnp.sqrt(objective1(params)**2+objective2(params)**2)
 
     # Transform params to unconstrained space
@@ -761,15 +812,14 @@ def fit_simple(
         params = constrain(params, bijectors)
         return objective(params)
 
-
     start_t = time.time()
     # Tranform params to unconstrained space
     params = unconstrain(params, bijectors)
-    print("Unconstrain Optim",{time.time() - start_t},flush=True)
+    print("Unconstrain Optim", {time.time() - start_t}, flush=True)
     start_t = time.time()
     # Initialise optimiser state
     opt_state = optax_optim.init(params)
-    print("Time Init Optim",{time.time() - start_t},flush=True)
+    print("Time Init Optim", {time.time() - start_t}, flush=True)
     # Iteration loop numbers to scan over
     iter_nums = jnp.arange(num_iters)
 
@@ -791,7 +841,7 @@ def fit_simple(
     # Run the optimisation loop
     (params, _), history = jax.lax.scan(step, (params, opt_state), iter_nums)
 
-    print("Lax Scan Optim",{time.time() - start_t},flush=True)
+    print("Lax Scan Optim", {time.time() - start_t}, flush=True)
 
     # Tranform final params to constrained space
     params = constrain(params, bijectors)
