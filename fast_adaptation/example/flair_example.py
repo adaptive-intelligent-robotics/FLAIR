@@ -103,7 +103,7 @@ class Driver:
         self.lap = 0
 
         # Parameters
-        self.error_threshold = 0.5
+        self.error_threshold = 0.3
         self.min_driver_speed = 0.0
         self.max_driver_speed = 0.03
         self.max_driver_rotation = 0.05

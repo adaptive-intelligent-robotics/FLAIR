@@ -2071,14 +2071,14 @@ actuators {
 actuators {
   name: "leg_1_1_2"
   joint: "leg_1_1_2"
-  strength: 20.0
+  strength: 60.0
   angle {
   }
 }
 actuators {
   name: "leg_1_2_3"
   joint: "leg_1_2_3"
-  strength: 20.0
+  strength: 60.0
   angle {
   }
 }
@@ -2113,14 +2113,14 @@ actuators {
 actuators {
   name: "leg_3_1_2"
   joint: "leg_3_1_2"
-  strength: 60.0
+  strength: 20.0
   angle {
   }
 }
 actuators {
   name: "leg_3_2_3"
   joint: "leg_3_2_3"
-  strength: 60.0
+  strength: 20.0
   angle {
   }
 }
