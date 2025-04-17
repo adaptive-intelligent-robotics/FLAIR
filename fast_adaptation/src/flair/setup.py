@@ -22,6 +22,7 @@ setup(
             "run_adaptation = flair.adaptation:main",
             "run_adaptation_rl = flair.adaptation_rl:main",
             "run_adaptation_lqr = flair.adaptation_lqr:main",
+            "run_adaptation_l1 = flair.adaptation_l1:main",
             "run_bridge = flair.bridge:main",
             "run_vicon = flair.vicon:main",
         ],

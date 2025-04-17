@@ -122,7 +122,7 @@ class FunctionalityController:
         ),
     )
     def _get_state_gp_prior(
-        max_p_value: float, 
+        max_p_value: float,
         min_command: float,
         max_command: float,
         state_dim: int,
@@ -150,8 +150,8 @@ class FunctionalityController:
             state[state_dim], a_min=state_min_opt_clip, a_max=state_max_opt_clip
         )
         new_p = a + b * clip_state + c * clip_state**2 + d * clip_state**3
-        new_p = jnp.clip(new_p,a_min=-max_p_value, a_max=max_p_value)
-        
+        new_p = jnp.clip(new_p, a_min=-max_p_value, a_max=max_p_value)
+
         # Get corresponding prior
         p1, p2 = jnp.min(jnp.asarray([1, 1 - new_p])), jnp.min(
             jnp.asarray([1, 1 + new_p])
@@ -189,7 +189,7 @@ class FunctionalityController:
         ),
     )
     def _get_state_only_prior(
-        max_p_value: float, 
+        max_p_value: float,
         min_command: float,
         max_command: float,
         state_dim: int,
@@ -213,7 +213,7 @@ class FunctionalityController:
             state[state_dim], a_min=state_min_opt_clip, a_max=state_max_opt_clip
         )
         new_p = a + b * clip_state + c * clip_state**2 + d * clip_state**3
-        new_p = jnp.clip(new_p,a_min=-max_p_value, a_max=max_p_value)
+        new_p = jnp.clip(new_p, a_min=-max_p_value, a_max=max_p_value)
         # Get corresponding prior
         p1, p2 = jnp.min(jnp.asarray([1, 1 - new_p])), jnp.min(
             jnp.asarray([1, 1 + new_p])

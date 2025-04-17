@@ -1,0 +1,166 @@
+version: "3.8"
+
+services:
+  adaptation:
+    image: airl:flair
+    container_name: adaptation
+    hostname: adaptation
+    command: bash -c '. ./install/setup.bash; ros2 run flair run_adaptation_l1 -l DEBUG; sleep infinity'
+    depends_on:
+      - rosserver
+    volumes:
+      - .:/me
+      - /extra/antoine_cache/.nv:/tmp/.nv
+    extra_hosts:
+      - "influxdb:10.1.1.100"
+    runtime: nvidia
+    environment:
+      INFLUXDB_KEY:
+      INFLUXDB_BUCKET:
+      HOME: /tmp
+      ROS_DISCOVERY_SERVER: rosserver:11811
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+      TF_CPP_MIN_LOG_LEVEL: 0
+    networks:
+      - sharednet
+
+  vicon:
+    image: airl:ros2_light
+    container_name: vicon
+    hostname: vicon
+    command: bash -c '. ./install/setup.bash; ros2 run flair run_vicon; sleep infinity'
+    depends_on:
+      - rosserver
+    profiles:
+      - nothing
+    volumes:
+      - .:/me
+      - /extra/antoine_cache/.nv:/tmp/.nv
+    extra_hosts:
+      - "influxdb:10.1.1.100"
+    runtime: nvidia
+    environment:
+      INFLUXDB_KEY:
+      INFLUXDB_BUCKET:
+      HOME: /tmp
+      ROS_DISCOVERY_SERVER: rosserver:11811
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+      TF_CPP_MIN_LOG_LEVEL: 0
+    networks:
+      - sharednet
+
+
+  rosbridge:
+    image: airl:ros2_light
+    container_name: rosbridge
+    hostname: rosbridge
+    command: bash -c '. ./install/setup.bash; ros2 run flair run_bridge -r gvrbotv1 -l INFO'
+    depends_on:
+      - rosserver
+    profiles:
+      - all
+    volumes:
+      - .:/me
+    extra_hosts:
+      - "gvrbotv1:192.168.0.101"
+    environment:
+      INFLUXDB_KEY:
+      INFLUXDB_BUCKET:
+      HOME: /tmp
+      LD_LIBRARY_PATH: '/opt/ros/humble/lib:/opt/ros/noetic/lib:'
+      ROS_DISCOVERY_SERVER: rosserver:11811
+      ROS_MASTER_URI: http://gvrbotv1:11311
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+    networks:
+      sharednet:
+      gvrbotnet:
+        ipv4_address: 192.168.0.190
+
+  rosserver:
+    image: airl:ros2_light
+    container_name: rosserver
+    hostname: rosserver
+    command: bash -c '. ./install/setup.bash; fastdds discovery --server-id 0; sleep infinity'
+    volumes:
+      - .:/me
+    environment:
+      INFLUXDB_KEY:
+      INFLUXDB_BUCKET:
+      HOME: /tmp
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+      FASTRTPS_DEFAULT_PROFILES_FILE: /me/config/server_profile.xml
+    networks:
+      sharednet:
+        ipv4_address: 10.1.1.221
+
+  sensor_vnpy:
+    image: airl:ros2_light
+    container_name: sensor_vnpy
+    hostname: sensor_vnpy
+    privileged: true
+    command: bash -c '. ./install/setup.bash; ros2 launch vectornav vectornav.launch.py; sleep infinity'
+    depends_on:
+      - rosserver
+    volumes:
+      - .:/me
+      - /dev/ttyTHS0:/dev/ttyUSB0
+    environment:
+      INFLUXDB_KEY:
+      INFLUXDB_BUCKET:
+      HOME: /tmp
+      ROS_DISCOVERY_SERVER: 10.1.1.221:11811
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+    networks:
+      - sharednet
+
+  sensor_zed:
+    image: airl:zeds
+    container_name: sensor_zed
+    hostname: sensor_zed
+    runtime: nvidia
+    privileged: true
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    command: bash -c ". ./install/setup.bash; ros2 launch zed_multi_camera zed_multi_camera.launch.py cam_names:=\"[forward]\" cam_models:=\"[zed2i]\" cam_serials:=\"[${CAMERA_FORWARD}]\" cam_poses:=\"[[0.0,0.0,0.0,0.0,0.0,0.0]]\""
+    depends_on:
+      - rosserver
+    volumes:
+      - .:/me
+      - ./data/resources:/usr/local/zed/resources
+      - ./data/zed_configs:/root/ros2_ws/install/zed_wrapper/share/zed_wrapper/config/local
+      - /usr/local/zed/settings:/usr/local/zed/settings
+      - /dev/shm:/dev/shm
+    environment:
+      INFLUXDB_KEY:
+      INFLUXDB_BUCKET:
+      HOME: /tmp
+      ROS_DISCOVERY_SERVER: 10.1.1.221:11811
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+    networks:
+      - sharednet
+
+
+
+networks:
+  gvrbotnet:
+     name: gvrbot-net
+     driver: macvlan
+     driver_opts:
+       parent: eth0
+     ipam:
+       config:
+         - subnet: "192.168.0.0/24"
+  sharednet:
+    name: computer-net
+    driver: macvlan
+    driver_opts:
+      parent: wlan0
+    ipam:
+      config:
+        - subnet: "10.1.1.0/24"
+          ip_range: "10.1.1.208/28"
+          gateway: "10.1.1.1"

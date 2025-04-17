@@ -1,5 +1,6 @@
-import numpy as np
 import os
+
+import numpy as np
 
 # Default configuration to set parameters automatically
 ADAPTATION_TREADMILL = "off"
@@ -32,10 +33,10 @@ SAFETY_THRESHOLD = 0.25
 ######################
 # Robot parameters #
 
-ROBOT_WIDTH = 0.33 # meters
-WHEEL_BASE = 0.35 # meters
-WHEEL_RADIUS = 0.0862 # wheel radius
-WHEEL_MAX_VELOCITY = 27 # radians/second
+ROBOT_WIDTH = 0.33  # meters
+WHEEL_BASE = 0.35  # meters
+WHEEL_RADIUS = 0.0862  # wheel radius
+WHEEL_MAX_VELOCITY = 27  # radians/second
 
 DEFAULT_OBS_NOISE = np.asarray([0.01750011])
 DEFAULT_VARIANCE = np.array([0.04772636])
@@ -48,7 +49,7 @@ else:
 ###################
 # Grid parameters #
 
-GRID_RESOLUTION = 101 
+GRID_RESOLUTION = 101
 MIN_COMMAND = -2.0
 MAX_COMMAND = 2.0
 
@@ -58,11 +59,11 @@ MAX_COMMAND = 2.0
 
 MIN_DIFF_DATAPOINT = 2
 
-DATAPOINT_BATCH_SIZE = 20 # 50 before fixed-grid
+DATAPOINT_BATCH_SIZE = 20  # 50 before fixed-grid
 USE_GRID_DATASET = True
 DATASET_SIZE = 1000
-DATASET_GRID_CELL_SIZE = 15 # 20 before fixed-grid
-DATASET_GRID_NEIGH = 0.6 # 0.5 before fixed-grid
+DATASET_GRID_CELL_SIZE = 15  # 20 before fixed-grid
+DATASET_GRID_NEIGH = 0.6  # 0.5 before fixed-grid
 DATASET_GRID_NOVELTY_THRESHOLD = 0.01
 
 ####################
@@ -85,17 +86,17 @@ if ADAPTATION_TREADMILL == "on":
     STATE_DIM = 4  # 4 for x-position, 5 for yaw
     STATE_MIN_DATASET = -0.7  # -0.7 for x-position, -0.4 for yaw
     STATE_MAX_DATASET = 0.7  # 0.7 for x-position, 0.4 for yaw
-    STATE_MIN_OPT_CLIP = -0.6  # -0.6 for x-position, -0.4 for yaw 
+    STATE_MIN_OPT_CLIP = -0.6  # -0.6 for x-position, -0.4 for yaw
     STATE_MAX_OPT_CLIP = 0.6  # 0.6 for x-position, 0.4 for yaw
 
     # Clipping for the p-values
     MAX_P_VALUE = 0.8
-    P1_MIN = - MAX_P_VALUE/STATE_MAX_OPT_CLIP
-    P1_MAX = MAX_P_VALUE/STATE_MAX_OPT_CLIP
-    P2_MIN = - MAX_P_VALUE/(STATE_MAX_OPT_CLIP**2)
-    P2_MAX = MAX_P_VALUE/(STATE_MAX_OPT_CLIP**2)
-    P3_MIN = - MAX_P_VALUE/(STATE_MAX_OPT_CLIP**3)
-    P3_MAX = MAX_P_VALUE/(STATE_MAX_OPT_CLIP**3)
+    P1_MIN = -MAX_P_VALUE / STATE_MAX_OPT_CLIP
+    P1_MAX = MAX_P_VALUE / STATE_MAX_OPT_CLIP
+    P2_MIN = -MAX_P_VALUE / (STATE_MAX_OPT_CLIP**2)
+    P2_MAX = MAX_P_VALUE / (STATE_MAX_OPT_CLIP**2)
+    P3_MIN = -MAX_P_VALUE / (STATE_MAX_OPT_CLIP**3)
+    P3_MAX = MAX_P_VALUE / (STATE_MAX_OPT_CLIP**3)
 
 elif ADAPTATION_WIND == "on":
 
@@ -106,38 +107,38 @@ elif ADAPTATION_WIND == "on":
     STATE_DIM = 5  # 4 for x-position, 5 for yaw
     STATE_MIN_DATASET = -3.14  # -0.7 for x-position, -0.4 for yaw
     STATE_MAX_DATASET = 3.14  # 0.7 for x-position, 0.4 for yaw
-    STATE_MIN_OPT_CLIP = -3.14  # -0.6 for x-position, -0.4 for yaw 
+    STATE_MIN_OPT_CLIP = -3.14  # -0.6 for x-position, -0.4 for yaw
     STATE_MAX_OPT_CLIP = 3.14  # 0.6 for x-position, 0.4 for yaw
 
     # Clipping for the p-values
     MAX_P_VALUE = 0.3
-    P1_MIN = - MAX_P_VALUE/STATE_MAX_OPT_CLIP
-    P1_MAX = MAX_P_VALUE/STATE_MAX_OPT_CLIP
-    P2_MIN = - MAX_P_VALUE/(STATE_MAX_OPT_CLIP**2)
-    P2_MAX = MAX_P_VALUE/(STATE_MAX_OPT_CLIP**2)
-    P3_MIN = - MAX_P_VALUE/(STATE_MAX_OPT_CLIP**3)
-    P3_MAX = MAX_P_VALUE/(STATE_MAX_OPT_CLIP**3)
+    P1_MIN = -MAX_P_VALUE / STATE_MAX_OPT_CLIP
+    P1_MAX = MAX_P_VALUE / STATE_MAX_OPT_CLIP
+    P2_MIN = -MAX_P_VALUE / (STATE_MAX_OPT_CLIP**2)
+    P2_MAX = MAX_P_VALUE / (STATE_MAX_OPT_CLIP**2)
+    P3_MIN = -MAX_P_VALUE / (STATE_MAX_OPT_CLIP**3)
+    P3_MAX = MAX_P_VALUE / (STATE_MAX_OPT_CLIP**3)
 
 else:
 
     MULTI_FUNCTON = True
-    REMOVE_OFFSET = True 
+    REMOVE_OFFSET = True
 
     # yaw state
     STATE_DIM = 5  # 4 for x-position, 5 for yaw
     STATE_MIN_DATASET = -3.14  # -0.7 for x-position, -0.4 for yaw
     STATE_MAX_DATASET = 3.14  # 0.7 for x-position, 0.4 for yaw
-    STATE_MIN_OPT_CLIP = -3.14  # -0.6 for x-position, -0.4 for yaw 
+    STATE_MIN_OPT_CLIP = -3.14  # -0.6 for x-position, -0.4 for yaw
     STATE_MAX_OPT_CLIP = 3.14  # 0.6 for x-position, 0.4 for yaw
 
     # Clipping for the p-values
     MAX_P_VALUE = 0.5
-    P1_MIN = - MAX_P_VALUE/STATE_MAX_OPT_CLIP
-    P1_MAX = MAX_P_VALUE/STATE_MAX_OPT_CLIP
-    P2_MIN = - MAX_P_VALUE/(STATE_MAX_OPT_CLIP**2)
-    P2_MAX = MAX_P_VALUE/(STATE_MAX_OPT_CLIP**2)
-    P3_MIN = - MAX_P_VALUE/(STATE_MAX_OPT_CLIP**3)
-    P3_MAX = MAX_P_VALUE/(STATE_MAX_OPT_CLIP**3)
+    P1_MIN = -MAX_P_VALUE / STATE_MAX_OPT_CLIP
+    P1_MAX = MAX_P_VALUE / STATE_MAX_OPT_CLIP
+    P2_MIN = -MAX_P_VALUE / (STATE_MAX_OPT_CLIP**2)
+    P2_MAX = MAX_P_VALUE / (STATE_MAX_OPT_CLIP**2)
+    P3_MIN = -MAX_P_VALUE / (STATE_MAX_OPT_CLIP**3)
+    P3_MAX = MAX_P_VALUE / (STATE_MAX_OPT_CLIP**3)
 
 
 ####################
@@ -145,8 +146,8 @@ else:
 
 MINIBATCH_SIZE = 30
 ERROR_BUFFER_SIZE = 30
-WEIGHT_ANGULAR_ROT = 0.8 
-NEW_SCENARIO_THRESHOLD = 0.34 #0.26 #0.33
+WEIGHT_ANGULAR_ROT = 0.8
+NEW_SCENARIO_THRESHOLD = 0.34  # 0.26 #0.33
 
 
 ##############################
@@ -157,22 +158,22 @@ FILTER_VARYING_ANGLE = False # Do not return datapoint if the angles are not con
 FILTER_TURNING_ONLY = False # Do not return datapoint if turning only in command
 
 # Signal matching parameters
-BUFFER_SIZE = 20 # In nb command points
-MIN_DELAY = 100000000 # In nanoseconds
-MAX_DELAY = 500000000 # In nanoseconds
+BUFFER_SIZE = 20  # In nb command points
+MIN_DELAY = 100000000  # In nanoseconds
+MAX_DELAY = 500000000  # In nanoseconds
 
 # Point selection parameters
-SELECTION_SIZE = 5 # In nb command points
+SELECTION_SIZE = 5  # In nb command points
 IQC_Q1 = 0.05
 IQC_Qn = 0.95
 
 # Command non-constant filtering
-FILTER_TRANSITION_SIZE = 3 # In nb command points
-FILTER_TRANSITION_TOLERANCE = 0.2 # In m/s
+FILTER_TRANSITION_SIZE = 3  # In nb command points
+FILTER_TRANSITION_TOLERANCE = 0.2  # In m/s
 
 # Angle non-constant filtering
-FILTER_VARYING_ANGLE_SIZE = 30 # In nb sensor points
-FILTER_VARYING_ANGLE_TOLERANCE = 0.3 # In rad/s
+FILTER_VARYING_ANGLE_SIZE = 30  # In nb sensor points
+FILTER_VARYING_ANGLE_TOLERANCE = 0.3  # In rad/s
 
 # Turning only filtering
 FILTER_TURNING_ONLY_TOLERANCE = 0.05
@@ -183,5 +184,4 @@ FILTER_TURNING_ONLY_TOLERANCE = 0.05
 
 DEBUG_GP_COLLECTION = True
 DEBUG_GP_TRAINING = True
-GP_MAP_FREQUENCY = 10 # Frequency to send to Influx the GPTraining map for debugging
-
+GP_MAP_FREQUENCY = 10  # Frequency to send to Influx the GPTraining map for debugging

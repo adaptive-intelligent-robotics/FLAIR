@@ -12,22 +12,24 @@ from jax.config import config
 config.update("jax_enable_x64", True)
 import copy
 import time
-from scipy.optimize import lsq_linear
 
 import gpjax as gpx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+from functionality_controller.datapoint import DataPoints
+from functionality_controller.dataset_fifo import FIFODataset, StateFIFODataset
+from functionality_controller.dataset_grid import (
+    OUT_OF_BOUND,
+    MultiDimsStateInputGridFIFODataset,
+)
+from functionality_controller.gp.gpjax_map_v2 import MAPMean, MAPPrior
 from gpjax.base import meta_leaves, meta_map
 from gpjax.dataset import Dataset
 from gpjax.fit import fit
 from gpjax.kernels import RBF
-
-from functionality_controller.datapoint import DataPoints
-from functionality_controller.dataset_fifo import StateFIFODataset, FIFODataset
-from functionality_controller.dataset_grid import MultiDimsStateInputGridFIFODataset, OUT_OF_BOUND
-from functionality_controller.gp.gpjax_map_v2 import MAPMean, MAPPrior
+from scipy.optimize import lsq_linear
 
 # from sklearn.svm import SVR
 from sklearn.linear_model import LogisticRegression
@@ -183,7 +185,7 @@ class AdaptiveGP:
         self.last_reset_t = time.time()
 
         # Default empty parameters
-        self.default_rotation = jnp.asarray([1., 1., 0., 0., 0., 0., 0.])
+        self.default_rotation = jnp.asarray([1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         self.default_offset = jnp.zeros(shape=(500, 2))
 
         # Init GP objects
@@ -204,9 +206,6 @@ class AdaptiveGP:
         _, _ = self._train_model()
 
         self.dataset = self.dataset_reset_fn(self.dataset)
-        
-
-
 
     def _to_cpu(self, array: jnp.ndarray):
         """Get a dataset array, tranfer it to numpy and remove OUT_OF_BOUND."""
@@ -223,9 +222,7 @@ class AdaptiveGP:
         self.dataset = self.dataset_reset_fn(self.dataset)
 
         # Reset minibatch
-        self.minibatch_dataset = self.minibatch_dataset_reset_fn(
-            self.minibatch_dataset
-        )
+        self.minibatch_dataset = self.minibatch_dataset_reset_fn(self.minibatch_dataset)
 
         # Reset counters
         self.total_position = 0
@@ -269,9 +266,7 @@ class AdaptiveGP:
         """Update the GP dataset, adding the latest datapoints."""
 
         # Update the dataset
-        self.dataset = self.dataset_add_fn(
-            dataset=self.dataset, datapoint=datapoint
-        )
+        self.dataset = self.dataset_add_fn(dataset=self.dataset, datapoint=datapoint)
 
         # Update N attribute for later calls
         self.total_position = self.total_position + jnp.sum(
@@ -290,7 +285,6 @@ class AdaptiveGP:
 
         # self._logger.debug("Ending update")
 
-
     def auto_reset(self) -> Tuple[bool, float]:
         """Test the reset condition, reset the dataset if necessary.
 
@@ -300,7 +294,7 @@ class AdaptiveGP:
         """
 
         # If it has been less than i seconds since last reset, do nothing
-        #if time.time() - self.last_reset_t < 5.0:
+        # if time.time() - self.last_reset_t < 5.0:
         #    return False, 0.0, 0.0
 
         # If there is not enough data in the minibatch, do nothing
@@ -325,10 +319,14 @@ class AdaptiveGP:
 
         # Compute all the corresponding errors
         intent_gp_error_x = np.abs(intent_x - gp_pred_x)
-        intent_gp_error_y = np.abs(intent_y - gp_pred_y) * self.auto_reset_angular_rot_weight
+        intent_gp_error_y = (
+            np.abs(intent_y - gp_pred_y) * self.auto_reset_angular_rot_weight
+        )
 
         cmd_sensor_error_x = np.abs(cmd_x - sensor_x)
-        cmd_sensor_error_y = np.abs(cmd_y - sensor_y) * self.auto_reset_angular_rot_weight
+        cmd_sensor_error_y = (
+            np.abs(cmd_y - sensor_y) * self.auto_reset_angular_rot_weight
+        )
 
         error_distance_x = np.abs(intent_gp_error_x - cmd_sensor_error_x)
         error_distance_y = np.abs(intent_gp_error_y - cmd_sensor_error_y)
@@ -361,29 +359,28 @@ class AdaptiveGP:
         # PREVIOUS VERSION
 
         ## Store the current error in the error buffer
-        #self.mean_intent_error_buffer.append(mean_intent_error)
+        # self.mean_intent_error_buffer.append(mean_intent_error)
 
         ## If the buffer is not filled, do not auto-reset
-        #if len(self.mean_intent_error_buffer) < self.auto_reset_error_buffer_size:
+        # if len(self.mean_intent_error_buffer) < self.auto_reset_error_buffer_size:
         #    return False, 0.0, mean_intent_error
 
         ## Else, just select the self.auto_reset_error_buffer_size latest errors
-        #self.mean_intent_error_buffer = self.mean_intent_error_buffer[
+        # self.mean_intent_error_buffer = self.mean_intent_error_buffer[
         #    -self.auto_reset_error_buffer_size:
-        #]
+        # ]
 
         ## If there is an increase in the error in the buffer, reset
-        #amplitude_increase = max(
+        # amplitude_increase = max(
         #    np.max(np.diff(self.mean_intent_error_buffer, n=1)),
         #    np.max(np.diff(self.mean_intent_error_buffer, n=2)),
-        #)
-        #if amplitude_increase > self.auto_reset_threshold:
+        # )
+        # if amplitude_increase > self.auto_reset_threshold:
         #    # Reset the GP, dataset and minibatch
         #    self.reset()
         #    return True, amplitude_increase, mean_intent_error
 
         return False, mean_intent_error_x, mean_intent_error
-
 
     def _train_model(self) -> Tuple[int, int]:
         """Train the model."""
@@ -438,7 +435,7 @@ class AdaptiveGP:
                 filtered_sensor_x=self._to_cpu(self.dataset.sensor_x),
                 filtered_sensor_y=self._to_cpu(self.dataset.sensor_y),
                 filtered_states=self._to_cpu(self.dataset.state),
-                remove_offset = self.remove_offset,
+                remove_offset=self.remove_offset,
                 p0_min=-self.max_p_value,
                 p0_max=self.max_p_value,
                 p1_min=self.p1_min,
@@ -482,14 +479,12 @@ class AdaptiveGP:
             p_state = np.asarray([0, p_state, 0, 0, offset])
             p = p_state[0]
 
-
         ## Soft Update
         previous_p = self.p_raw
-        p_mask = (p_state != 0)
+        p_mask = p_state != 0
         p_state = previous_p - np.clip(previous_p - p_state, a_min=-0.3, a_max=0.3)
         p_state = np.where(p_mask, p_state, 0)
         self.p_raw = p_state
-
 
         self._logger.debug(f"New introspection:: {p_state}")
         optimization_time = time.time() - start_t
@@ -601,8 +596,8 @@ class AdaptiveGP:
 
         weights_noise = jnp.ones((dataset.command_x.shape[0]))
         # Apply weight for accumulated datapoints
-        #weights_noise = jnp.squeeze(1 / dataset.num_accumulate)
-        #if len(dataset.num_accumulate) == 1:
+        # weights_noise = jnp.squeeze(1 / dataset.num_accumulate)
+        # if len(dataset.num_accumulate) == 1:
         #    weights_noise = jnp.expand_dims(weights_noise, axis=0)
 
         # Get state
@@ -717,15 +712,15 @@ class AdaptiveGP:
     ) -> Tuple:
         """Find the best prior in multi-function case."""
 
-        #For the treadmill we adjust for the angle
-        #yaw_angle = filtered_states[:, [5]]
-        #filtered_command_x = np.multiply(filtered_command_x,np.cos(yaw_angle))
+        # For the treadmill we adjust for the angle
+        # yaw_angle = filtered_states[:, [5]]
+        # filtered_command_x = np.multiply(filtered_command_x,np.cos(yaw_angle))
 
         # Build the datasets
         dataset_x = np.concatenate([filtered_command_x, filtered_command_y], axis=-1)
         dataset_y = np.concatenate([filtered_sensor_x, filtered_sensor_y], axis=-1)
         selected_state = filtered_states[:, [state_dim]]
-        
+
         # Clip and reshape the state
         signs = np.sign(selected_state)
         selected_state = np.repeat(selected_state.reshape(-1, 1), 2, axis=0)
@@ -741,7 +736,7 @@ class AdaptiveGP:
 
         ## No Offset
         if remove_offset:
-            offset =np.zeros(shape=offset.shape)
+            offset = np.zeros(shape=offset.shape)
 
         a = np.concatenate(
             [-signs * 0.5, np.ones(shape=signs.shape) * robot_width / 4], axis=1
@@ -766,18 +761,22 @@ class AdaptiveGP:
         ]
 
         # Compute regression using least squares for all the functions in function list
-        lstsq_rests = np.ones(len(functions_list)) * np.inf # Default to inf
+        lstsq_rests = np.ones(len(functions_list)) * np.inf  # Default to inf
         lstsq_coeffs = np.zeros(len(functions_list))
         lstsq_offsets = np.zeros(len(functions_list))
         mins = [p0_min, p1_min, p2_min, p3_min]
         maxs = [p0_max, p1_max, p2_max, p3_max]
-        for function_index in range (len(functions_list)):
+        for function_index in range(len(functions_list)):
 
             # Compute the least squares
             B_new = np.multiply(B, functions_list[function_index])
             # B_new = np.concatenate([B_new, offset], axis=1)
             # coeff, rest, _, _ = np.linalg.lstsq(B_new, A)
-            res = lsq_linear(B_new,A.squeeze(), bounds=([mins[function_index]], [maxs[function_index]]))
+            res = lsq_linear(
+                B_new,
+                A.squeeze(),
+                bounds=([mins[function_index]], [maxs[function_index]]),
+            )
             coeff = res.x
             rest = res.cost
 
@@ -789,14 +788,13 @@ class AdaptiveGP:
 
         # Get best function to fit too using the rests values
         best_func = np.argmin(lstsq_rests)
-        #print(lstsq_coeffs)
-        #print(lstsq_rests, flush=True)
+        # print(lstsq_coeffs)
+        # print(lstsq_rests, flush=True)
         # self.log_model.fit()
 
         # Keep coeffs of all functions zero except the best function
         p_choice = np.zeros(shape=(len(functions_list) + 1))  # +1 for offset
         p_choice[best_func] = lstsq_coeffs[best_func]
         p_choice[-1] = lstsq_offsets[best_func]
-
 
         return p_choice, lstsq_rests[best_func]

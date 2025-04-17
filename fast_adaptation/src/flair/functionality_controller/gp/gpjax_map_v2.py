@@ -19,66 +19,46 @@
 # ==============================================================================
 
 
+import copy
+import time
 from abc import abstractmethod
-from dataclasses import dataclass
-from flax import linen as nn
+from dataclasses import dataclass, field
 from functools import partial
 
-from beartype.typing import (
-    Any,
-    Callable,
-    Optional,
-    Sequence,
-    Dict,
-    Union,
-    Tuple,
-)
-import jax.numpy as jnp
-from jax.random import (
-    PRNGKey,
-    normal,
-)
-from jaxtyping import (
-    Float,
-    Num,
-)
-from dataclasses import (
-    dataclass,
-    field,
-)
-from gpjax.base import (
-    Module,
-    param_field,
-    static_field,
-)
 import flax
-from gpjax.dataset import Dataset
-from gpjax.gaussian_distribution import GaussianDistribution
-from gpjax.kernels import RFF, RBF
-from gpjax.kernels.base import AbstractKernel
-from gpjax.likelihoods import (
-    AbstractLikelihood,
-    Gaussian,
-)
-from gpjax.linops import identity,DiagonalLinearOperator,to_dense
-from gpjax.mean_functions import AbstractMeanFunction, Zero
-from gpjax.typing import (
-    Array,
-    FunctionalSample,
-    KeyArray,
-    Array,
-    ScalarFloat,
-)
-
-import time
-from gpjax.gps import AbstractPrior,construct_posterior,AbstractPosterior
 import jax
-import copy
+import jax.numpy as jnp
 import optax as ox
+from beartype.typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
+from flax import linen as nn
+from gpjax.base import Module, param_field, static_field
+from gpjax.dataset import Dataset
+from gpjax.fit import (
+    _check_batch_size,
+    _check_log_rate,
+    _check_model,
+    _check_num_iters,
+    _check_optim,
+    _check_prng_key,
+    _check_train_data,
+    _check_verbose,
+    get_batch,
+)
+from gpjax.gaussian_distribution import GaussianDistribution
+from gpjax.gps import AbstractPosterior, AbstractPrior, construct_posterior
+from gpjax.kernels import RBF, RFF
+from gpjax.kernels.base import AbstractKernel
+from gpjax.likelihoods import AbstractLikelihood, Gaussian
+from gpjax.linops import DiagonalLinearOperator, identity, to_dense
+from gpjax.mean_functions import AbstractMeanFunction, Zero
+
 # from gpjax.parameters import constrain, trainable_params, unconstrain,ParameterState
 from gpjax.objectives import AbstractObjective
 from gpjax.scan import vscan
-from gpjax.fit import get_batch,_check_model, _check_train_data,_check_optim,_check_num_iters,_check_batch_size,_check_prng_key,_check_log_rate,_check_verbose
+from gpjax.typing import Array, FunctionalSample, KeyArray, ScalarFloat
+from jax.random import PRNGKey, normal
+from jaxtyping import Float, Num
+
 
 @dataclass
 class MAPMean(AbstractMeanFunction):
@@ -86,14 +66,14 @@ class MAPMean(AbstractMeanFunction):
     A zero mean function. This function returns a repeated scalar value for all inputs.
     The scalar value itself can be treated as a model hyperparameter and learned during training.
     """
-    chosen_bd: Float[Array, "1"] =  static_field(default_factory=0)
+
+    chosen_bd: Float[Array, "1"] = static_field(default_factory=0)
     rotation: Float[Array, "1"] = param_field(jnp.zeros(shape=(1,)))
     # rotation: Float[Array, "2"] = param_field(jnp.ones(shape=(2,)))
     offset: Float[Array, "2"] = param_field(jnp.zeros(shape=(2,)))
-    
 
     # def __init__(
-    #     self, maps: Sequence[jnp.array],ref_map:jnp.array, output_dim: Optional[int] = 1,chosen_bd: Optional[int] = 0, name: Optional[str] = "Mean function", 
+    #     self, maps: Sequence[jnp.array],ref_map:jnp.array, output_dim: Optional[int] = 1,chosen_bd: Optional[int] = 0, name: Optional[str] = "Mean function",
     # ):
     #     """Initialise the constant-mean function.
     #     Args:
@@ -108,7 +88,9 @@ class MAPMean(AbstractMeanFunction):
 
     # @jax.jit
     def get_behaviours_with_state(
-        self,input_points: Float[Array, "N D"],state,
+        self,
+        input_points: Float[Array, "N D"],
+        state,
     ):
         ## State Dependent P
         ## alpha*x**2+beta
@@ -120,7 +102,6 @@ class MAPMean(AbstractMeanFunction):
         # # new_p = alpha*jnp.clip(state,a_min=-0.6,a_max=0.6)+beta
         # # new_p = alpha*state**3+beta
 
-
         ### a+b*x+c*x**2+d*x**3
         a = self.offset[0]
         b = self.offset[1]
@@ -128,95 +109,100 @@ class MAPMean(AbstractMeanFunction):
         d = self.offset[3]
         offset = self.offset[4]
         # clip_state = jnp.clip(state,a_min=-0.4,a_max=0.4)
-        clip_state = jnp.clip(state,a_min=-0.6,a_max=0.6)
-        new_p = a+b*clip_state+c*clip_state**2+d*clip_state**3
-        w= 0.33
-
-        
+        clip_state = jnp.clip(state, a_min=-0.6, a_max=0.6)
+        new_p = a + b * clip_state + c * clip_state**2 + d * clip_state**3
+        w = 0.33
 
         # p1,p2 = jnp.min(jnp.asarray([1,1-new_p])),jnp.min(jnp.asarray([1,1+new_p]))
-        p1,p2 = jnp.clip(1-new_p,a_max=1.0),jnp.clip(1+new_p,a_max=1.0)
+        p1, p2 = jnp.clip(1 - new_p, a_max=1.0), jnp.clip(1 + new_p, a_max=1.0)
 
-        diag = (p1+p2) / 2
+        diag = (p1 + p2) / 2
         # diag = jnp.clip((p1+p2) / 2, 0.5, 1.0)
 
-        scaling = jnp.asarray([[diag,(p2-p1)*w/4],[(p2-p1)/w,diag]]).T
+        scaling = jnp.asarray([[diag, (p2 - p1) * w / 4], [(p2 - p1) / w, diag]]).T
 
         ##TODO Einsum
-        
-        a = jnp.concatenate([diag,(p2-p1)*w/4],axis=1)
-        b = jnp.concatenate([(p2-p1)/w,diag],axis=1)
+
+        a = jnp.concatenate([diag, (p2 - p1) * w / 4], axis=1)
+        b = jnp.concatenate([(p2 - p1) / w, diag], axis=1)
         # print("SHAPES",a.shape,b.shape,new_p.shape,p1.shape,p2.shape,diag.shape,flush=True)
         # print("New Map P1,P2",jnp.multiply(input_points,a).sum(axis=1).shape,b.shape,input_points.shape,jnp.asarray([diag,(p2-p1)*w/4]).shape,jnp.multiply(input_points,jnp.asarray([diag,(p2-p1)*w/4])).shape,flush=True)
 
-        new_map_mean = jnp.stack([jnp.multiply(input_points,a).sum(axis=1)+offset,jnp.multiply(input_points,b).sum(axis=1)],axis=-1)
+        new_map_mean = jnp.stack(
+            [
+                jnp.multiply(input_points, a).sum(axis=1) + offset,
+                jnp.multiply(input_points, b).sum(axis=1),
+            ],
+            axis=-1,
+        )
         # print("New Map ",new_map_mean.shape,state.shape,flush=True)
         # new_map = jnp.matmul(all_descriptors,scaling)
 
         # return new_map
         return new_map_mean
 
-    
-    def get_behaviours_simple(self,input_points: Float[Array, "N D"],chosen_bd):
+    def get_behaviours_simple(self, input_points: Float[Array, "N D"], chosen_bd):
 
         # print("ROTATION",self.chosen_bd,flush=True)
 
         p = self.rotation[0]
-        p = jnp.clip(p,-1.0,1.0)
+        p = jnp.clip(p, -1.0, 1.0)
         # p1,p2 = self.rotation[0],self.rotation[1] #/jnp.max(params['rotation'])
-        p1,p2 = jnp.min(jnp.asarray([1,1-p])),jnp.min(jnp.asarray([1,1+p]))
-        p3,p4  = self.offset[0],self.offset[1]
+        p1, p2 = jnp.min(jnp.asarray([1, 1 - p])), jnp.min(jnp.asarray([1, 1 + p]))
+        p3, p4 = self.offset[0], self.offset[1]
         w = 0.33
-        diag = jnp.clip((p1+p2) / 2, 0.5, 1.0)
-        scaling = jnp.asarray([[diag,(p2-p1)*w/4],[(p2-p1)/w,diag]]).T
-        constants = jnp.ones(shape=(1,1)) #params['constant']
+        diag = jnp.clip((p1 + p2) / 2, 0.5, 1.0)
+        scaling = jnp.asarray([[diag, (p2 - p1) * w / 4], [(p2 - p1) / w, diag]]).T
+        constants = jnp.ones(shape=(1, 1))  # params['constant']
 
-        offset = jnp.round(jnp.asarray([[p3,p4]]),decimals=2)
+        offset = jnp.round(jnp.asarray([[p3, p4]]), decimals=2)
 
-        new_map = jnp.matmul(input_points,scaling) + offset
-        
+        new_map = jnp.matmul(input_points, scaling) + offset
+
         # error_per_map = jax.tree_map(lambda x: (x-self.ref_map),all_maps)
-        
+
         # error_per_map = jnp.asarray(error_per_map)
         # # Weighted Sum of all the Errors per BD
         # errors = jnp.sum(error_per_map.at[:,:,self.chosen_bd].get()*constants,axis=0).reshape(-1, 1)
         # return errors
-        
-        return new_map.at[:,[chosen_bd]].get()
 
-    def get_behaviours_all(self,input_points: Float[Array, "N D"]):
+        return new_map.at[:, [chosen_bd]].get()
+
+    def get_behaviours_all(self, input_points: Float[Array, "N D"]):
 
         # print("ROTATION",self.chosen_bd,flush=True)
 
         p = self.rotation[0]
-        p = jnp.clip(p,-1.0,1.0)
+        p = jnp.clip(p, -1.0, 1.0)
         # p1,p2 = self.rotation[0],self.rotation[1] #/jnp.max(params['rotation'])
-        p1,p2 = jnp.min(jnp.asarray([1,1-p])),jnp.min(jnp.asarray([1,1+p]))
-        p3,p4  = self.offset[0],self.offset[1]
+        p1, p2 = jnp.min(jnp.asarray([1, 1 - p])), jnp.min(jnp.asarray([1, 1 + p]))
+        p3, p4 = self.offset[0], self.offset[1]
         w = 0.33
-        diag = jnp.clip((p1+p2) / 2, 0.5, 1.0)
-        scaling = jnp.asarray([[diag,(p2-p1)*w/4],[(p2-p1)/w,diag]]).T
-        constants = jnp.ones(shape=(1,1)) #params['constant']
+        diag = jnp.clip((p1 + p2) / 2, 0.5, 1.0)
+        scaling = jnp.asarray([[diag, (p2 - p1) * w / 4], [(p2 - p1) / w, diag]]).T
+        constants = jnp.ones(shape=(1, 1))  # params['constant']
 
-        offset = jnp.round(jnp.asarray([[p3,p4]]),decimals=2)
+        offset = jnp.round(jnp.asarray([[p3, p4]]), decimals=2)
 
-        new_map = jnp.matmul(input_points,scaling) + offset
-        
+        new_map = jnp.matmul(input_points, scaling) + offset
+
         # error_per_map = jax.tree_map(lambda x: (x-self.ref_map),all_maps)
-        
+
         # error_per_map = jnp.asarray(error_per_map)
         # # Weighted Sum of all the Errors per BD
         # errors = jnp.sum(error_per_map.at[:,:,self.chosen_bd].get()*constants,axis=0).reshape(-1, 1)
         # return errors
-        
+
         # return new_map.at[:,[chosen_bd]].get()
         return new_map
 
+    def pred_state(self, x: Float[Array, "N D"], state) -> Float[Array, "N Q"]:
+        return self.get_behaviours_with_state(x[:, -2:], state)
 
-    def pred_state(self, x: Float[Array, "N D"],state) -> Float[Array, "N Q"]:
-        return self.get_behaviours_with_state(x[:,-2:],state)
     # @jax.jit
-    def __call__(self, x: Float[Array, "N D"],chosen_bd=None,state=None) -> Float[Array, "N Q"]:
+    def __call__(
+        self, x: Float[Array, "N D"], chosen_bd=None, state=None
+    ) -> Float[Array, "N Q"]:
         """Evaluate the mean function at the given points.
         Args:
             params (Dict): The parameters of the mean function.
@@ -236,12 +222,11 @@ class MAPMean(AbstractMeanFunction):
         # print("NEW X :",x,flush=True)
         if chosen_bd == None:
             chosen_bd = self.chosen_bd
-        elif chosen_bd ==-1:
-            return self.get_behaviours_all(x[:,-2:])
-        transformed_map = self.get_behaviours_simple(x[:,-2:],chosen_bd)
+        elif chosen_bd == -1:
+            return self.get_behaviours_all(x[:, -2:])
+        transformed_map = self.get_behaviours_simple(x[:, -2:], chosen_bd)
         # print("NEW MAP :",transformed_map.shape,flush=True)
         return transformed_map
-
 
     def init_params(self, key: KeyArray) -> Dict:
         """The parameters of the mean function. For the constant-mean function, this is a dictionary with a single value.
@@ -253,17 +238,16 @@ class MAPMean(AbstractMeanFunction):
 
         # return {"constant": jnp.ones(shape=(self.num_maps,1))/self.num_maps,"scaling":jnp.identity(2)}
 
-        
-        parameters = {"rotation":jnp.ones(shape=(2,)),"offset":jnp.zeros(shape=(2,))}
+        parameters = {"rotation": jnp.ones(shape=(2,)), "offset": jnp.zeros(shape=(2,))}
         # parameters['capacity'] = parameters['capacity'].at[:2].set(1.0)
         # return {"scaling":jnp.identity(2)}
         return parameters
 
 
-
 #######################
 # GP Priors
 #######################
+
 
 @dataclass
 class MAPPrior(AbstractPrior):
@@ -342,7 +326,7 @@ class MAPPrior(AbstractPrior):
                 is conjugate.
         """
         return self.__mul__(other)
-    
+
     def predict(
         self, params: Dict
     ) -> Callable[[Float[Array, "N D"]], GaussianDistribution]:
@@ -376,14 +360,14 @@ class MAPPrior(AbstractPrior):
         kernel = self.kernel
 
         def predict_fn(
-            test_inputs: Float[Array, "N D"],indices: Optional[jnp.array]=None
+            test_inputs: Float[Array, "N D"], indices: Optional[jnp.array] = None
         ) -> GaussianDistribution:
 
             # Unpack test inputs
             t = test_inputs
             n_test = test_inputs.shape[0]
 
-            μt = mean_function(params["mean_function"], t,testing=True)
+            μt = mean_function(params["mean_function"], t, testing=True)
             Ktt = kernel.gram(params["kernel"], t)
             Ktt += identity(n_test) * self.jitter
 
@@ -402,6 +386,7 @@ class MAPPrior(AbstractPrior):
             "kernel": self.kernel.init_params(key),
             "mean_function": self.mean_function.init_params(key),
         }
+
 
 @dataclass
 class MAPConjugatePosterior(AbstractPosterior):
@@ -430,6 +415,7 @@ class MAPConjugatePosterior(AbstractPosterior):
         >>>
         >>> posterior = prior * likelihood
     """
+
     def predict(
         self,
         test_inputs: Num[Array, "N D"],
@@ -489,24 +475,23 @@ class MAPConjugatePosterior(AbstractPosterior):
         """
         # Unpack training data
 
-
-        x, y, n = train_data.X, train_data.y[:,[chosen_bd]], train_data.n
+        x, y, n = train_data.X, train_data.y[:, [chosen_bd]], train_data.n
 
         # Unpack test inputs
         t, n_test = test_inputs, test_inputs.shape[0]
 
         # Observation noise o²
         obs_noise = self.likelihood.obs_noise
-        mx = self.prior.mean_function(x,chosen_bd)
+        mx = self.prior.mean_function(x, chosen_bd)
 
         # start_t = time.time()
         # Precompute Gram matrix, Kxx, at training inputs, x
         Kxx = self.prior.kernel.gram(x) + (identity(n) * self.prior.jitter)
         # print("Kxx Optim",{time.time() - start_t},flush=True)
         # Σ = Kxx + Io²
-        Sigma = Kxx + identity(n) * obs_noise*weights_noise
+        Sigma = Kxx + identity(n) * obs_noise * weights_noise
 
-        mean_t = self.prior.mean_function(t,chosen_bd)
+        mean_t = self.prior.mean_function(t, chosen_bd)
 
         # start_t = time.time()
         # print("MEAN,", mean_t.shape,y.shape,flush=True)
@@ -517,29 +502,28 @@ class MAPConjugatePosterior(AbstractPosterior):
 
         # start_t = time.time()
         # Σ⁻¹ Kxt
-        #Sigma_inv_Kxt = Sigma.solve(Kxt)
-        #logger.warning(f'size of SIGMA mat: {Sigma_inv_Kxt.shape}')
+        # Sigma_inv_Kxt = Sigma.solve(Kxt)
+        # logger.warning(f'size of SIGMA mat: {Sigma_inv_Kxt.shape}')
         # print("Sigma_inv_Kxt Optim",{time.time() - start_t},flush=True)
         # μt  +  Ktx (Kxx + Io²)⁻¹ (y  -  μx)
-        #mean = mean_t + jnp.matmul(Sigma_inv_Kxt.T, y - mx)
+        # mean = mean_t + jnp.matmul(Sigma_inv_Kxt.T, y - mx)
 
         L = jnp.linalg.cholesky(Sigma.to_dense())
-        alpha = jnp.linalg.solve(jnp.transpose(L), jnp.linalg.solve(L, y-mx) )
-        mean = mean_t + jnp.matmul(jnp.transpose(Kxt),alpha)
-        
-        #logger.warning(f'size of mean mat: {mean.shape}')
+        alpha = jnp.linalg.solve(jnp.transpose(L), jnp.linalg.solve(L, y - mx))
+        mean = mean_t + jnp.matmul(jnp.transpose(Kxt), alpha)
 
-        
+        # logger.warning(f'size of mean mat: {mean.shape}')
+
         # start_t = time.time()
         # Ktt  -  Ktx (Kxx + Io²)⁻¹ Kxt, TODO: Take advantage of covariance structure to compute Schur complement more efficiently.
         # v = jnp.linalg.solve(L,Kxt)
         # covariance = 1 - jnp.sum(jnp.square(v),axis=0) # Variance of the GP
 
         covariance = jnp.ones(shape=(n_test,))
-        #covariance = Ktt - jnp.matmul(Kxt.T, Sigma_inv_Kxt)
-        #covariance += identity(n_test) * self.prior.jitter
-        #logger.warning(f'size of uncertainty mat: {covariance}')
-        
+        # covariance = Ktt - jnp.matmul(Kxt.T, Sigma_inv_Kxt)
+        # covariance += identity(n_test) * self.prior.jitter
+        # logger.warning(f'size of uncertainty mat: {covariance}')
+
         # print("Covariance Optim",{time.time() - start_t},flush=True)
 
         return mean.squeeze(), covariance
@@ -602,7 +586,6 @@ class MAPConjugatePosterior(AbstractPosterior):
         """
         # Unpack training data
 
-
         x, y, n = train_data.X, train_data.y, train_data.n
 
         # Unpack test inputs
@@ -610,42 +593,39 @@ class MAPConjugatePosterior(AbstractPosterior):
 
         # Observation noise o²
         obs_noise = self.likelihood.obs_noise
-        mx = self.prior.mean_function(x,-1)
+        mx = self.prior.mean_function(x, -1)
 
         # start_t = time.time()
         # Precompute Gram matrix, Kxx, at training inputs, x
         Kxx = self.prior.kernel.gram(x) + (identity(n) * self.prior.jitter)
         # print("Kxx Optim",{time.time() - start_t},flush=True)
         # Σ = Kxx + Io²
-        Sigma = Kxx + identity(n) * obs_noise*weights_noise
+        Sigma = Kxx + identity(n) * obs_noise * weights_noise
 
-        mean_t = self.prior.mean_function(t,-1) ## Make quicker
-    
+        mean_t = self.prior.mean_function(t, -1)  ## Make quicker
+
         Kxt = self.prior.kernel.cross_covariance(x, t)
 
-
         L = jnp.linalg.cholesky(Sigma.to_dense())
-        alpha = jnp.linalg.solve(jnp.transpose(L), jnp.linalg.solve(L, y-mx) )
-        cov_term = jnp.matmul(jnp.transpose(Kxt),alpha)
+        alpha = jnp.linalg.solve(jnp.transpose(L), jnp.linalg.solve(L, y - mx))
+        cov_term = jnp.matmul(jnp.transpose(Kxt), alpha)
         mean = mean_t + cov_term
-        
-        #logger.warning(f'size of mean mat: {mean.shape}')
 
-        
+        # logger.warning(f'size of mean mat: {mean.shape}')
+
         # start_t = time.time()
         # Ktt  -  Ktx (Kxx + Io²)⁻¹ Kxt, TODO: Take advantage of covariance structure to compute Schur complement more efficiently.
         # v = jnp.linalg.solve(L,Kxt)
         # covariance = 1 - jnp.sum(jnp.square(v),axis=0) # Variance of the GP
         covariance = jnp.ones(shape=(n_test,))
 
-        #covariance = Ktt - jnp.matmul(Kxt.T, Sigma_inv_Kxt)
-        #covariance += identity(n_test) * self.prior.jitter
-        #logger.warning(f'size of uncertainty mat: {covariance}')
-        
+        # covariance = Ktt - jnp.matmul(Kxt.T, Sigma_inv_Kxt)
+        # covariance += identity(n_test) * self.prior.jitter
+        # logger.warning(f'size of uncertainty mat: {covariance}')
+
         # print("Covariance Optim",{time.time() - start_t},flush=True)
 
-        return mean.squeeze(), covariance,cov_term
-
+        return mean.squeeze(), covariance, cov_term
 
     def predict_all_state(
         self,
@@ -707,7 +687,6 @@ class MAPConjugatePosterior(AbstractPosterior):
         """
         # Unpack training data
 
-
         x, y, n = train_data.X, train_data.y, train_data.n
 
         # Unpack test inputs
@@ -715,40 +694,40 @@ class MAPConjugatePosterior(AbstractPosterior):
 
         # Observation noise o²
         obs_noise = self.likelihood.obs_noise
-        mx = self.prior.mean_function.pred_state(x,state_train)
+        mx = self.prior.mean_function.pred_state(x, state_train)
         # mx =  self.prior.mean_function(x,-1)
 
         # start_t = time.time()
         # Precompute Gram matrix, Kxx, at training inputs, x
-        # Kxx = self.prior.kernel.gram(x) + (identity(n) * self.prior.jitter)   
-        x_state = jnp.concatenate([x,state_train],axis=1)
-        x_test_state = jnp.concatenate([t,state_test],axis=1)
+        # Kxx = self.prior.kernel.gram(x) + (identity(n) * self.prior.jitter)
+        x_state = jnp.concatenate([x, state_train], axis=1)
+        x_test_state = jnp.concatenate([t, state_test], axis=1)
 
         Kxx = self.prior.kernel.gram(x_state) + (identity(n) * self.prior.jitter)
-    
+
         # print("Kxx Optim",{time.time() - start_t},flush=True)
         # Σ = Kxx + Io²
-        Sigma = Kxx + identity(n) * obs_noise*weights_noise
+        Sigma = Kxx + identity(n) * obs_noise * weights_noise
 
-        mean_t = self.prior.mean_function.pred_state(t,state_test) ## Make quicker
+        mean_t = self.prior.mean_function.pred_state(t, state_test)  ## Make quicker
         # mean_t = self.prior.mean_function(t,-1) ## Make quicker
 
         Kxt = self.prior.kernel.cross_covariance(x, t)
 
         base_kernel = RBF(active_dims=[0]).replace(
             lengthscale=jnp.array([10.0]),
-            variance=jnp.array([1.0]), # HACK, needs to be 1
+            variance=jnp.array([1.0]),  # HACK, needs to be 1
         )
         # Kxt_state = self.prior.kernel.cross_covariance(state_train, state_test)
         Kxt_state = base_kernel.cross_covariance(state_train, state_test)
-        
-        # Kxt_full = Kxt 
-        Kxt_full = jnp.multiply(Kxt,Kxt_state)
+
+        # Kxt_full = Kxt
+        Kxt_full = jnp.multiply(Kxt, Kxt_state)
         # print("KXT_FULL",Kxt_state,flush=True)
 
         L = jnp.linalg.cholesky(Sigma.to_dense())
-        alpha = jnp.linalg.solve(jnp.transpose(L), jnp.linalg.solve(L, y-mx) )
-        cov_term = jnp.matmul(jnp.transpose(Kxt_full),alpha)
+        alpha = jnp.linalg.solve(jnp.transpose(L), jnp.linalg.solve(L, y - mx))
+        cov_term = jnp.matmul(jnp.transpose(Kxt_full), alpha)
         # cov_term = jnp.matmul(jnp.transpose(Kxt),alpha)
 
         # alpha = jnp.linalg.solve(L, jnp.linalg.solve(jnp.transpose(L), Kxt))
@@ -756,23 +735,24 @@ class MAPConjugatePosterior(AbstractPosterior):
         mean = mean_t + cov_term
 
         # cov_term = cov_term.at[:,1].set(0.0)
-        
-        #logger.warning(f'size of mean mat: {mean.shape}')
-        
+
+        # logger.warning(f'size of mean mat: {mean.shape}')
+
         # start_t = time.time()
         # Ktt  -  Ktx (Kxx + Io²)⁻¹ Kxt, TODO: Take advantage of covariance structure to compute Schur complement more efficiently.
-        
+
         # v = jnp.linalg.solve(L,Kxt_full)
         # covariance = 1 - jnp.sum(jnp.square(v),axis=0) # Variance of the GP
 
         covariance = jnp.ones(shape=(n_test,))
-        #covariance = Ktt - jnp.matmul(Kxt.T, Sigma_inv_Kxt)
-        #covariance += identity(n_test) * self.prior.jitter
-        #logger.warning(f'size of uncertainty mat: {covariance}')
-        
+        # covariance = Ktt - jnp.matmul(Kxt.T, Sigma_inv_Kxt)
+        # covariance += identity(n_test) * self.prior.jitter
+        # logger.warning(f'size of uncertainty mat: {covariance}')
+
         # print("Covariance Optim",{time.time() - start_t},flush=True)
 
-        return mean.squeeze(), covariance,alpha, Kxt
+        return mean.squeeze(), covariance, alpha, Kxt
+
 
 def map_fit(  # noqa: PLR0913
     *,
@@ -864,13 +844,15 @@ def map_fit(  # noqa: PLR0913
         _check_verbose(verbose)
 
     # Unconstrained space loss function with stop-gradient rule for non-trainable params.
-    def loss(model1: Module,model2: Module, batch1: Dataset,batch2: Dataset) -> ScalarFloat:
+    def loss(
+        model1: Module, model2: Module, batch1: Dataset, batch2: Dataset
+    ) -> ScalarFloat:
         model1 = model1.stop_gradient()
         model2 = model2.stop_gradient()
         # print(batch1.X.values, flush=True)
         l1 = objective(model1.constrain(), batch1)
         l2 = objective(model2.constrain(), batch2)
-        return l1+l2
+        return l1 + l2
 
     # Unconstrained space model.
     model1 = model1.unconstrain()
@@ -878,37 +860,40 @@ def map_fit(  # noqa: PLR0913
 
     # Initialise optimiser state.
     # state = optim.init(model1)
-    state = optim.init({"model1":model1,"model2":model2})
+    state = optim.init({"model1": model1, "model2": model2})
 
     # Mini-batch random keys to scan over.
     iter_keys = jax.random.split(key, num_iters)
 
-    batch1 = train_data.replace(y=train_data.y[:,[0]])
-    batch2 = train_data.replace(y=train_data.y[:,[1]])
+    batch1 = train_data.replace(y=train_data.y[:, [0]])
+    batch2 = train_data.replace(y=train_data.y[:, [1]])
 
     # Optimisation step.
     def step(carry, key):
-        model1,model2, opt_state = carry
+        model1, model2, opt_state = carry
 
         # if batch_size != -1:
         #     batch = get_batch(train_data, batch_size, key)
         # else:
-        
+
         # batch1.y = train_data.y[:,0]
         # batch2.y = train_data.y[:,1]
-        loss_val, loss_gradient = jax.value_and_grad(loss)(model1,model2, batch1,batch2)
+        loss_val, loss_gradient = jax.value_and_grad(loss)(
+            model1, model2, batch1, batch2
+        )
 
-        updates, opt_state = optim.update(loss_gradient, opt_state, {"model1":model1,"model2":model2})
-        full_updates = ox.apply_updates({"model1":model1,"model2":model2}, updates)
-
+        updates, opt_state = optim.update(
+            loss_gradient, opt_state, {"model1": model1, "model2": model2}
+        )
+        full_updates = ox.apply_updates({"model1": model1, "model2": model2}, updates)
 
         # ## Updating the mean function for the updates of the second model
         # new_mean = updates.prior.mean_function.replace(chosen_bd=1)
         # updates = updates.replace(prior=updates.prior.replace(mean_function=new_mean))
-        
+
         # # updates, opt_state2 = optim.update(loss_gradient, opt_state2, model2)
         # model2 = ox.apply_updates(model2, updates)
-        carry = full_updates['model1'],full_updates['model2'],opt_state
+        carry = full_updates["model1"], full_updates["model2"], opt_state
         # carry = model1, model2, opt_state
         return carry, loss_val
 
@@ -916,13 +901,15 @@ def map_fit(  # noqa: PLR0913
     scan = vscan if verbose else jax.lax.scan
     start_t = time.time()
     # Optimisation loop.
-    (model1,model2, _), history = scan(step, (model1,model2, state), (iter_keys), unroll=unroll)
-    print("Scan Optim",{time.time() - start_t},flush=True)
+    (model1, model2, _), history = scan(
+        step, (model1, model2, state), (iter_keys), unroll=unroll
+    )
+    print("Scan Optim", {time.time() - start_t}, flush=True)
     # Constrained space.
     model1 = model1.constrain()
     model2 = model2.constrain()
 
-    return model1,model2, history
+    return model1, model2, history
 
 
 def map_fit_test(  # noqa: PLR0913
@@ -1015,12 +1002,14 @@ def map_fit_test(  # noqa: PLR0913
         _check_verbose(verbose)
 
     # Unconstrained space loss function with stop-gradient rule for non-trainable params.
-    def loss(model1: Module,model2: Module, batch1: Dataset,batch2: Dataset) -> ScalarFloat:
+    def loss(
+        model1: Module, model2: Module, batch1: Dataset, batch2: Dataset
+    ) -> ScalarFloat:
         model1 = model1.stop_gradient()
         model2 = model2.stop_gradient()
         l1 = objective(model1.constrain(), batch1)
         l2 = objective(model2.constrain(), batch2)
-        return l1+l2
+        return l1 + l2
 
     # Unconstrained space model.
     model1 = model1.unconstrain()
@@ -1031,23 +1020,26 @@ def map_fit_test(  # noqa: PLR0913
 
     # Mini-batch random keys to scan over.
     iter_keys = jax.random.split(key, num_iters)
-    batch1 = Dataset(X=train_data.X,y=train_data.y.at[:,[0]].get())#train_data.replace(y=train_data.y[:,[0]])
-    batch2 = Dataset(X=train_data.X,y=train_data.y.at[:,[1]].get())
+    batch1 = Dataset(
+        X=train_data.X, y=train_data.y.at[:, [0]].get()
+    )  # train_data.replace(y=train_data.y[:,[0]])
+    batch2 = Dataset(X=train_data.X, y=train_data.y.at[:, [1]].get())
 
     # Optimisation step.
     def step(carry, key):
-        model1,model2, opt_state = carry
+        model1, model2, opt_state = carry
 
-        loss_val, loss_gradient = jax.value_and_grad(loss)(model1,model2, batch1,batch2)
+        loss_val, loss_gradient = jax.value_and_grad(loss)(
+            model1, model2, batch1, batch2
+        )
 
         updates, opt_state = optim.update(loss_gradient, opt_state, model1)
         model1 = ox.apply_updates(model1, updates)
 
-
         ## Updating the mean function for the updates of the second model
         new_mean = updates.prior.mean_function.replace(chosen_bd=1)
         updates = updates.replace(prior=updates.prior.replace(mean_function=new_mean))
-        
+
         # updates, opt_state2 = optim.update(loss_gradient, opt_state2, model2)
         model2 = ox.apply_updates(model2, updates)
 
@@ -1058,14 +1050,15 @@ def map_fit_test(  # noqa: PLR0913
     scan = vscan if verbose else jax.lax.scan
 
     # Optimisation loop.
-    (model1,model2, _), history = scan(step, (model1,model2, state), (iter_keys), unroll=unroll)
+    (model1, model2, _), history = scan(
+        step, (model1, model2, state), (iter_keys), unroll=unroll
+    )
 
     # Constrained space.
     model1 = model1.constrain()
     model2 = model2.constrain()
 
-    return model1,model2, history
-
+    return model1, model2, history
 
 
 feature_space_dim = 2
@@ -1083,6 +1076,7 @@ class Network(nn.Module):
         x = nn.tanh(x)
         return x
 
+
 @dataclass
 class DeepKernelFunction(AbstractKernel):
     base_kernel: AbstractKernel = None
@@ -1098,8 +1092,10 @@ class DeepKernelFunction(AbstractKernel):
         if self.network is None:
             raise ValueError("network must be specified")
         # self.nn_params = flax.core.unfreeze(self.network.init(self.key, self.dummy_x))
-        dummy_batch = jnp.ones(shape=(1,self.obs_dimensions))
-        self.nn_params = flax.core.unfreeze(self.network.init(jax.random.PRNGKey(123), dummy_batch))
+        dummy_batch = jnp.ones(shape=(1, self.obs_dimensions))
+        self.nn_params = flax.core.unfreeze(
+            self.network.init(jax.random.PRNGKey(123), dummy_batch)
+        )
 
     def __call__(
         self, x: Float[Array, " D"], y: Float[Array, " D"]
@@ -1110,9 +1106,9 @@ class DeepKernelFunction(AbstractKernel):
         xt = self.network.apply(self.nn_params, x)
         yt = self.network.apply(self.nn_params, y)
 
-        inputs_gp_xt = jnp.concatenate([action_x,xt],axis=0)
-        inputs_gp_yt = jnp.concatenate([action_y,yt],axis=0)
-        print("SHAPE INPUT ",inputs_gp_xt.shape,flush=True)
+        inputs_gp_xt = jnp.concatenate([action_x, xt], axis=0)
+        inputs_gp_yt = jnp.concatenate([action_y, yt], axis=0)
+        print("SHAPE INPUT ", inputs_gp_xt.shape, flush=True)
         return self.base_kernel(inputs_gp_xt, inputs_gp_yt)
         # return self.base_kernel(xt, yt)
 
@@ -1195,8 +1191,8 @@ class MAPConjugateMLL(AbstractObjective):
         # mx1 = posterior.prior.mean_function(x,chosen_bd = 0)
         # mx2 = posterior.prior.mean_function(x,chosen_bd = 1)
 
-        mx = posterior.prior.mean_function(x,chosen_bd = -1)
-        mx1, mx2 = mx[:,[0]],mx[:,[1]]
+        mx = posterior.prior.mean_function(x, chosen_bd=-1)
+        mx1, mx2 = mx[:, [0]], mx[:, [1]]
 
         # Σ = (Kxx + Io²) = LLᵀ
         Kxx = posterior.prior.kernel.gram(x)
@@ -1207,7 +1203,11 @@ class MAPConjugateMLL(AbstractObjective):
         mll1 = GaussianDistribution(jnp.atleast_1d(mx1.squeeze()), Sigma)
         mll2 = GaussianDistribution(jnp.atleast_1d(mx2.squeeze()), Sigma)
 
-        l1 = self.constant * (mll1.log_prob(jnp.atleast_1d(y.at[:,[0]].get().squeeze())).squeeze())
-        l2 = self.constant * (mll2.log_prob(jnp.atleast_1d(y.at[:,[1]].get().squeeze())).squeeze())
+        l1 = self.constant * (
+            mll1.log_prob(jnp.atleast_1d(y.at[:, [0]].get().squeeze())).squeeze()
+        )
+        l2 = self.constant * (
+            mll2.log_prob(jnp.atleast_1d(y.at[:, [1]].get().squeeze())).squeeze()
+        )
 
-        return l1+l2
+        return l1 + l2
