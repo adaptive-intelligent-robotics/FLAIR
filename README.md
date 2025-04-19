@@ -84,7 +84,7 @@ Unlike the simulated pipeline, the data collection, model training and model inf
 
 ### Building Docker Images
 
-Run the following commands to build the `docker` container:
+To build the `docker` container, first enter the `docker\` folder, then run the following commands:
 
 ```
 docker build -t airl:flair -f airl/Dockerfile .
