@@ -19,6 +19,16 @@ However, as a consequence, do not expect significative speed-up from running on 
 ### Requirements and Singularity container
 
 We provide the detailed requirements in [singularity/requirements.txt](./singularity/requirements.txt).
+You can install these requirements into a new conda environment:
+```
+conda create -n flair python=3.10
+conda activate flair
+```
+Once the environment is created you can then install the requirements file.
+```
+pip install -r singularity/requirements.txt
+````
+
 
 Alternatively, we also provide the def file of a [Singularity / Apptainer](https://apptainer.org/docs/user/latest/) container that install all the required libraries. This def file can be found in [singularity/singularity.def](./singularity/singularity.def). To build a container from this def file, enter the [singularity/](./singularity/) folder and run the `build_final_image` script. 
 
