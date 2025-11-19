@@ -21,7 +21,7 @@ However, as a consequence, do not expect significative speed-up from running on 
 We provide the detailed requirements in [singularity/requirements.txt](./singularity/requirements.txt).
 You can install these requirements into a new conda environment:
 ```
-conda create -n flair python=3.10
+conda create -n flair python=3.11
 conda activate flair
 ```
 Once the environment is created you can then install the requirements file.
