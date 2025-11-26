@@ -26,7 +26,7 @@ conda activate flair
 ```
 Once the environment is created you can then install the requirements file.
 ```
-pip install -r singularity/requirements.txt
+pip install -r requirements.txt
 ````
 
 
