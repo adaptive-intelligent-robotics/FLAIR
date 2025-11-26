@@ -34,7 +34,7 @@ Alternatively, we also provide the def file of a [Singularity / Apptainer](https
 
 ### Running a FLAIR example
 
-This was tested on a DGX Spark Device. 
+This was tested on a DGX Spark Device with Arm Chip (NVIDIA DGX OS - a customized Linux distribution) & a Computer with Ubuntu 22.04.4 (+ RTX A6000 Ada GPU)
 
 For simplicity, we provide a default low-level controller for the Hexapod as part of this repository. 
 Alternatively, the next section of this README provides steps to re-generate this low-level controller. 
