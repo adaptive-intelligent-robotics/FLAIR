@@ -1,0 +1,2 @@
+name,results,seed,num_generations,batch_size,env_name,episode_length,log_period,archive_log_period,euclidean_centroids,euclidean_grid_shape,iso_sigma,line_sigma,min_bd,max_bd,qd_offset,results_repertoire,metrics_file
+MAP-Elites,map_elites_map,180813,1000,4096,hexapod_velocity,150,50,500,False,50_50,0.005,0.05,-0.075_-0.075,0.075_0.075,750,map_elites_map/repertoire_MAP-Elites_180813/,map_elites_map/metrics_MAP-Elites_180813.csv

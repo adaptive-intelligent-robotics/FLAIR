@@ -34,6 +34,8 @@ Alternatively, we also provide the def file of a [Singularity / Apptainer](https
 
 ### Running a FLAIR example
 
+This was tested on a DGX Spark Device. 
+
 For simplicity, we provide a default low-level controller for the Hexapod as part of this repository. 
 Alternatively, the next section of this README provides steps to re-generate this low-level controller. 
 This section covers the steps to see FLAIR in action in the Hexapod environment using this default low-level controller.

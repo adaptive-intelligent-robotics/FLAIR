@@ -1,0 +1,2 @@
+Filter_transition,Filter_varying_angle,Filter_turning_only,Buffer_size,Min_delay,Max_delay,Selection_size,IQC_Q1,IQC_Qn,Filter_transition_size,Filter_transition_tolerance,Filter_varying_angle_size,Filter_varying_angle_tolerance,Filter_turning_only_tolerance
+True,False,False,20,100000000,500000000,5,0.05,0.95,3,0.2,30,0.3,0.05

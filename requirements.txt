@@ -1,0 +1,14 @@
+--find-links https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+jax==0.4.18
+jaxlib==0.4.18
+qdax==0.3.0
+pandas==2.2.3
+seaborn==0.13.2
+gpjax==0.6.0
+triton
+optax==0.1.7
+scipy==1.12.0
+requests
+brax==0.10.2
+mujoco-mjx==3.1.6 
+mujoco==3.1.6
